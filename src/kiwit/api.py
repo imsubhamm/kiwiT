@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .brokers import BrokerApiError, GrowwBrokerClient, GrowwSettings
 from .checkpointing import postgres_checkpointer
 from .database import DatabaseSettings, PostgresDatabase
 from .observability import Metrics, configure_logging
@@ -50,7 +51,7 @@ def _require_api_key(x_kiwit_api_key: Annotated[str | None, Header()] = None) ->
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid API key")
 
 
-def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None) -> FastAPI:
+def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None, broker_client: Any | None = None) -> FastAPI:
     owns_index = knowledge_index is None
     configure_logging()
 
@@ -60,6 +61,13 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None)
         app.state.database = database
         app.state.ledger = ledger or PostgresPaperLedger(database)
         app.state.knowledge = knowledge_index or PostgresKnowledgeIndex(database)
+        if broker_client is not None:
+            app.state.broker = broker_client
+        else:
+            try:
+                app.state.broker = GrowwBrokerClient(GrowwSettings.from_env())
+            except ValueError:
+                app.state.broker = None
         app.state.metrics = Metrics()
         yield
         if owns_index and isinstance(app.state.knowledge, LocalKnowledgeIndex):
@@ -186,6 +194,70 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None)
             "has_fill": "fill" in values,
             "checkpoint_id": saved.config.get("configurable", {}).get("checkpoint_id"),
         }
+
+    def require_broker(request: Request) -> Any:
+        broker = request.app.state.broker
+        if broker is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Groww broker is not configured")
+        return broker
+
+    @app.get("/api/v1/broker/status", dependencies=protected)
+    def broker_status(request: Request) -> dict[str, Any]:
+        return {"broker": "groww", "configured": request.app.state.broker is not None, "execution": "disabled"}
+
+    @app.get("/api/v1/broker/profile", dependencies=protected)
+    def broker_profile(request: Request) -> dict[str, Any]:
+        try:
+            profile = require_broker(request).profile()
+        except BrokerApiError as error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+        return {"broker": "groww", "profile": profile}
+
+    @app.get("/api/v1/broker/holdings", dependencies=protected)
+    def broker_holdings(request: Request) -> dict[str, Any]:
+        try:
+            holdings = require_broker(request).holdings()
+        except BrokerApiError as error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+        return {"broker": "groww", "holdings": holdings}
+
+    @app.get("/api/v1/broker/positions", dependencies=protected)
+    def broker_positions(request: Request, segment: str = "CASH") -> dict[str, Any]:
+        try:
+            positions = require_broker(request).positions(segment)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
+        except BrokerApiError as error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+        return {"broker": "groww", "positions": positions}
+
+    @app.get("/api/v1/broker/margin", dependencies=protected)
+    def broker_margin(request: Request) -> dict[str, Any]:
+        try:
+            margin = require_broker(request).margin()
+        except BrokerApiError as error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+        return {"broker": "groww", "margin": margin}
+
+    @app.get("/api/v1/broker/quotes/{trading_symbol}", dependencies=protected)
+    def broker_quote(request: Request, trading_symbol: str, segment: str = "CASH", exchange: str = "NSE") -> dict[str, Any]:
+        try:
+            quote = require_broker(request).quote(trading_symbol, segment, exchange)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
+        except BrokerApiError as error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+        return {"broker": "groww", "quote": quote}
+
+    @app.get("/api/v1/broker/orders/{groww_order_id}", dependencies=protected)
+    def broker_order(request: Request, groww_order_id: str, segment: str = "CASH") -> dict[str, Any]:
+        try:
+            order = require_broker(request).order_status(groww_order_id, segment)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
+        except BrokerApiError as error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+        return {"broker": "groww", "order": order}
 
     return app
 

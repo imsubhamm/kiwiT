@@ -33,12 +33,23 @@ class FakeKnowledge:
         return [SimpleNamespace(chunk_id="abc", citation="[abc] Risk Book, p. 7", content="Risk first.", score=1.0, source_type="book")]
 
 
+class FakeBroker:
+    def profile(self):
+        return {"nse_enabled": True, "active_segments": ["CASH"]}
+
+    def holdings(self):
+        return [{"trading_symbol": "NIFTYBEES", "quantity": 1}]
+
+    def positions(self, segment="CASH"):
+        return [{"trading_symbol": "NIFTYBEES", "segment": segment}]
+
+
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.key = "a-secure-test-key-that-is-long-enough"
         self.environment = patch.dict(os.environ, {"KIWIT_API_KEY": self.key}, clear=False)
         self.environment.start()
-        self.client = TestClient(create_app(ledger=FakeLedger(), knowledge_index=FakeKnowledge()))
+        self.client = TestClient(create_app(ledger=FakeLedger(), knowledge_index=FakeKnowledge(), broker_client=FakeBroker()))
         self.client.__enter__()
 
     def tearDown(self):
@@ -77,6 +88,15 @@ class ApiTests(unittest.TestCase):
         with patch.dict(os.environ, {"KIWIT_PREVIOUS_API_KEY": previous}, clear=False):
             response = self.client.get("/api/v1/paper/accounts/test", headers={"X-KIWIT-API-Key": previous})
         self.assertEqual(response.status_code, 200)
+
+    def test_broker_endpoints_are_read_only_and_protected(self):
+        headers = {"X-KIWIT-API-Key": self.key}
+        self.assertEqual(self.client.get("/api/v1/broker/status").status_code, 401)
+        status_response = self.client.get("/api/v1/broker/status", headers=headers).json()
+        self.assertTrue(status_response["configured"])
+        self.assertEqual(status_response["execution"], "disabled")
+        self.assertTrue(self.client.get("/api/v1/broker/profile", headers=headers).json()["profile"]["nse_enabled"])
+        self.assertEqual(len(self.client.get("/api/v1/broker/holdings", headers=headers).json()["holdings"]), 1)
 
     def test_account_and_kill_switch(self):
         headers = {"X-KIWIT-API-Key": self.key}

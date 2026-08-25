@@ -70,4 +70,6 @@ Operational endpoints, metrics, alert thresholds, incident response, and rollbac
 
 Application, host, CI, secret-rotation, and infrastructure security requirements are documented in `docs/SECURITY.md`.
 
+The read-only Groww reconciliation adapter and the mandatory gate before order mutation are documented in `docs/BROKER_INTEGRATION.md`.
+
 The July 2024 endpoint transition is intentionally the default cutoff for this first archival dataset. New-format UDiFF ingestion will be a separate adapter.

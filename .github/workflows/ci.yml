@@ -20,5 +20,5 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: pip install -e '.[api,production,workflow,research,dev]'
-      - run: ruff check src/kiwit/api.py src/kiwit/observability.py src/kiwit/database.py src/kiwit/langgraph_workflow.py src/kiwit/paper_trading.py
+      - run: ruff check src/kiwit/api.py src/kiwit/brokers src/kiwit/observability.py src/kiwit/database.py src/kiwit/langgraph_workflow.py src/kiwit/paper_trading.py
       - run: pytest -q
