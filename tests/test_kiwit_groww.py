@@ -51,6 +51,12 @@ class GrowwBrokerTests(unittest.TestCase):
         self.assertNotIn(token, str(caught.exception))
         self.assertIn("GA001", str(caught.exception))
 
+    def test_timeout_fails_closed_with_sanitized_error(self):
+        def timeout_transport(_request, _timeout):
+            raise TimeoutError("private upstream detail")
+        with self.assertRaisesRegex(BrokerApiError, "Groww request unavailable"):
+            GrowwBrokerClient(self.settings(), timeout_transport).profile()
+
     def test_mutating_orders_are_hard_disabled(self):
         transport = FakeTransport({"status": "SUCCESS", "payload": {}})
         client = GrowwBrokerClient(self.settings(), transport)

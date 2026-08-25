@@ -167,6 +167,26 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None,
         request.app.state.ledger.release_halt(account_id, body.operator)
         return request.app.state.ledger.account_status(account_id)
 
+    @app.get("/api/v1/paper/accounts/{account_id}/operations", dependencies=protected)
+    def paper_operations(account_id: str, request: Request) -> dict[str, Any]:
+        ledger = request.app.state.ledger
+        if not hasattr(ledger, "operational_report"):
+            status_data = ledger.account_status(account_id)
+            return {
+                "account_id": account_id, "status": "collecting_evidence",
+                "automation": {"enabled": False, "blocked_reason": "No approved strategy", "target_sessions": 40,
+                               "completed_sessions": 0, "operator_action": "Approve a validated strategy first."},
+                "summary": {"initial_cash": status_data.get("cash_balance", "0"), "current_equity": status_data.get("cash_balance", "0"),
+                            "realized_pnl": status_data.get("realized_pnl", "0"), "max_drawdown_pct": "0", "trade_count": 0,
+                            "fees": "0", "turnover": "0", "open_positions": len(status_data.get("positions", [])), "active_incidents": 0},
+                "equity_curve": [], "incidents": [], "review": {"decision": "insufficient_evidence", "checks": []},
+                "failure_tests": [],
+            }
+        try:
+            return ledger.operational_report(account_id)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "paper account not found") from error
+
     @app.post("/api/v1/research/search", dependencies=protected)
     def search(body: SearchRequest, request: Request) -> dict[str, Any]:
         hits = request.app.state.knowledge.search(body.query, limit=body.limit)

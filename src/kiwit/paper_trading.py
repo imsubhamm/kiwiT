@@ -12,6 +12,7 @@ from .database import PostgresDatabase
 from .domain import Instrument, Quote, RiskDecision, Side, TradeProposal
 from .execution import PaperFill
 from .persistence import canonical_json
+from .operations import build_operational_report
 
 
 @dataclass(frozen=True)
@@ -253,6 +254,29 @@ class PostgresPaperLedger:
                 for row in positions
             ],
         }
+
+    def operational_report(self, account_id: str) -> dict[str, Any]:
+        with self.database.connect(autocommit=True) as connection:
+            account = connection.execute(
+                "SELECT initial_cash,cash_balance,realized_pnl FROM paper_accounts WHERE account_id=%s", (account_id,),
+            ).fetchone()
+            if not account:
+                raise KeyError(account_id)
+            daily = connection.execute(
+                "SELECT trading_date,starting_equity+realized_pnl,fees,turnover,trade_count "
+                "FROM paper_daily_ledger WHERE account_id=%s ORDER BY trading_date", (account_id,),
+            ).fetchall()
+            incidents = connection.execute(
+                "SELECT scope,reason_code,reason,active,activated_at,released_at FROM system_halts "
+                "WHERE scope IN ('global',%s) ORDER BY activated_at DESC LIMIT 50", (account_id,),
+            ).fetchall()
+            positions = connection.execute(
+                "SELECT count(*) FROM paper_positions WHERE account_id=%s AND quantity>0", (account_id,),
+            ).fetchone()[0]
+        return build_operational_report(
+            account_id=account_id, initial_cash=account[0], cash_balance=account[1], realized_pnl=account[2],
+            daily_rows=daily, incident_rows=incidents, positions=positions,
+        )
 
 
 class AccountPaperBroker:

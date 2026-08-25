@@ -105,6 +105,20 @@ class ApiTests(unittest.TestCase):
         halted = self.client.post("/api/v1/paper/accounts/test/halt", headers=headers, json={"reason": "safety test"})
         self.assertTrue(halted.json()["execution_halted"])
 
+    def test_operations_report_is_protected(self):
+        endpoint = "/api/v1/paper/accounts/test/operations"
+        self.assertEqual(self.client.get(endpoint).status_code, 401)
+        response = self.client.get(endpoint, headers={"X-KIWIT-API-Key": self.key})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["automation"]["enabled"])
+
+    def test_database_outage_fails_readiness_closed(self):
+        class FailedDatabase:
+            def healthcheck(self):
+                raise RuntimeError("simulated outage")
+        self.client.app.state.database = FailedDatabase()
+        self.assertEqual(self.client.get("/ready").status_code, 503)
+
     def test_rag_search_returns_citation(self):
         response = self.client.post(
             "/api/v1/research/search", headers={"X-KIWIT-API-Key": self.key}, json={"query": "risk sizing"}

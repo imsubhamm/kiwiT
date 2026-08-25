@@ -61,6 +61,11 @@ if [[ -n $previous_release && -d $previous_release ]]; then
 fi
 install -m 0644 "$release_dir/deploy/kiwit-api.service" /etc/systemd/system/kiwit-api.service
 install -m 0644 "$release_dir/deploy/nginx-kiwit.conf" /etc/nginx/conf.d/kiwit.conf
+install -m 0644 "$release_dir/deploy/kiwit-watchdog.service" /etc/systemd/system/kiwit-watchdog.service
+install -m 0644 "$release_dir/deploy/kiwit-watchdog.timer" /etc/systemd/system/kiwit-watchdog.timer
+chmod 0755 "$release_dir/scripts/health_watchdog.sh"
+systemctl daemon-reload
+systemctl enable --now kiwit-watchdog.timer
 systemctl daemon-reload
 nginx -t
 ln -sfn "$release_dir" /opt/kiwit/current

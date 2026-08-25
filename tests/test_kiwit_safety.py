@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from kiwit.audit import HashChainAuditLog
 from kiwit.domain import Decision, Instrument, Quote, RiskDecision, Side, TradeProposal
-from kiwit.execution import PaperBroker
+from kiwit.execution import FillAccumulator, PaperBroker
 from kiwit.strategy import StrategyContext, TrendPullbackResearchStrategy
 
 
@@ -40,6 +40,14 @@ class SafetyTests(unittest.TestCase):
             record["payload"]["value"] = 2
             path.write_text(json.dumps(record) + "\n")
             self.assertFalse(audit.verify())
+
+    def test_partial_fills_are_idempotent_and_bounded(self):
+        tracker = FillAccumulator(10)
+        self.assertEqual(tracker.record("fill-1", 4)["status"], "partially_filled")
+        self.assertEqual(tracker.record("fill-1", 4)["filled_quantity"], 4)
+        self.assertEqual(tracker.record("fill-2", 6)["status"], "filled")
+        with self.assertRaises(ValueError):
+            tracker.record("fill-3", 1)
 
 
 if __name__ == "__main__":
