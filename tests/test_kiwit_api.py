@@ -47,7 +47,21 @@ class ApiTests(unittest.TestCase):
 
     def test_health_is_public_but_account_is_protected(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+        self.assertEqual(self.client.get("/live").status_code, 200)
+        self.assertEqual(self.client.get("/ready").json()["database"], "injected")
         self.assertEqual(self.client.get("/api/v1/paper/accounts/test").status_code, 401)
+
+    def test_metrics_are_authenticated_and_record_requests(self):
+        self.client.get("/health")
+        self.assertEqual(self.client.get("/metrics").status_code, 401)
+        response = self.client.get("/metrics", headers={"X-KIWIT-API-Key": self.key})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("kiwit_http_requests_total", response.text)
+        self.assertIn('route="/health"', response.text)
+
+    def test_request_id_is_returned(self):
+        response = self.client.get("/health", headers={"X-Request-ID": "operator-123"})
+        self.assertEqual(response.headers["X-Request-ID"], "operator-123")
 
     def test_account_and_kill_switch(self):
         headers = {"X-KIWIT-API-Key": self.key}

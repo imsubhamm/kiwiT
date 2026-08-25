@@ -66,4 +66,6 @@ Run the secured API and operator dashboard with `scripts/run_api.py`. See `docs/
 
 EC2 bootstrap and merge-to-main deployment are defined under `deploy/` and `.github/workflows/`; see `docs/DEPLOYMENT.md`.
 
+Operational endpoints, metrics, alert thresholds, incident response, and rollback are documented in `docs/MONITORING_OPERATIONS.md`.
+
 The July 2024 endpoint transition is intentionally the default cutoff for this first archival dataset. New-format UDiFF ingestion will be a separate adapter.

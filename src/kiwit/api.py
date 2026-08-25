@@ -1,20 +1,26 @@
 from __future__ import annotations
 
+import logging
 import os
 import secrets
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .checkpointing import postgres_checkpointer
 from .database import DatabaseSettings, PostgresDatabase
+from .observability import Metrics, configure_logging
 from .paper_trading import PostgresPaperLedger
 from .rag import LocalKnowledgeIndex, PostgresKnowledgeIndex
+
+logger = logging.getLogger("kiwit.api")
 
 
 class HaltRequest(BaseModel):
@@ -40,12 +46,15 @@ def _require_api_key(x_kiwit_api_key: Annotated[str | None, Header()] = None) ->
 
 def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None) -> FastAPI:
     owns_index = knowledge_index is None
+    configure_logging()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         database = PostgresDatabase(DatabaseSettings.from_env()) if ledger is None else None
+        app.state.database = database
         app.state.ledger = ledger or PostgresPaperLedger(database)
         app.state.knowledge = knowledge_index or PostgresKnowledgeIndex(database)
+        app.state.metrics = Metrics()
         yield
         if owns_index and isinstance(app.state.knowledge, LocalKnowledgeIndex):
             app.state.knowledge.close()
@@ -59,7 +68,24 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
-        response = await call_next(request)
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))[:128]
+        started = time.monotonic()
+        app.state.metrics.begin()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+        finally:
+            duration = time.monotonic() - started
+            route = request.scope.get("route")
+            route_name = getattr(route, "path", "unmatched")
+            app.state.metrics.finish(request.method, route_name, status_code, duration)
+            logger.info(
+                "request_completed",
+                extra={"request_id": request_id, "method": request.method, "path": request.url.path,
+                       "status_code": status_code, "duration_ms": round(duration * 1000, 2)},
+            )
+        response.headers["X-Request-ID"] = request_id
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = "default-src 'self'; connect-src 'self'; style-src 'self'; script-src 'self'"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -72,6 +98,27 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None)
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "kiwit-api", "execution": "paper-only"}
+
+    @app.get("/live")
+    def live() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/ready")
+    def ready(request: Request) -> dict[str, Any]:
+        database = request.app.state.database
+        if database is None:  # dependency-injected tests/local operation
+            return {"status": "ok", "database": "injected"}
+        try:
+            result = database.healthcheck()
+        except Exception as error:
+            request.app.state.metrics.readiness_failed()
+            logger.exception("readiness_failed")
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "database unavailable") from error
+        return {"status": "ok", "database": "connected", "schema_version": result["schema_version"]}
+
+    @app.get("/metrics", dependencies=protected, response_class=PlainTextResponse)
+    def metrics(request: Request) -> str:
+        return request.app.state.metrics.render()
 
     @app.get("/dashboard", include_in_schema=False)
     def dashboard() -> FileResponse:

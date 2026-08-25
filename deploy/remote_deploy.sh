@@ -30,6 +30,6 @@ ln -sfn "$release_dir" /opt/kiwit/current
 systemctl restart kiwit-api
 systemctl reload nginx
 sleep 2
-curl --fail --silent http://127.0.0.1:8000/health >/dev/null
+curl --fail --silent --connect-timeout 3 --max-time 20 http://127.0.0.1:8000/ready >/dev/null
 find "$release_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf
 echo "deployed $release_id"
