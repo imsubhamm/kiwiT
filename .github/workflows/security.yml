@@ -27,7 +27,7 @@ jobs:
         run: bandit -q -r src scripts -x tests
       - name: Reject committed private keys
         run: |
-          if git grep -I -n -- 'BEGIN .*PRIVATE KEY' -- ':!*.md'; then
+          if git grep -I -n -- 'BEGIN .*PRIVATE KEY' -- ':!*.md' ':!.github/workflows/security.yml'; then
             echo 'Private key material detected in tracked files' >&2
             exit 1
           fi
