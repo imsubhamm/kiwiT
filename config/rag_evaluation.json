@@ -1,0 +1,27 @@
+[
+  {
+    "question": "How does the opening window help interpret candlestick patterns?",
+    "expected_title_contains": "Japanese Candlestick",
+    "require_page": true
+  },
+  {
+    "question": "Why must a trader think in probabilities instead of expecting certainty?",
+    "expected_title_contains": "Trading_in_the_Zone",
+    "require_page": true
+  },
+  {
+    "question": "How can maximum adverse excursion be used when setting a protective stop?",
+    "expected_title_contains": "trade-your-way",
+    "require_page": true
+  },
+  {
+    "question": "What is kiwiT's daily loss limit and drawdown halt?",
+    "expected_title_contains": "BOOK_SYNTHESIS",
+    "require_page": false
+  },
+  {
+    "question": "What did the randomized entry control reveal about Donchian?",
+    "expected_title_contains": "STRATEGY_VALIDATION",
+    "require_page": false
+  }
+]

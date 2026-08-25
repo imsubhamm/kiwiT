@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>kiwiT · Paper control</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+  <header>
+    <div><span class="mark">K</span><h1>kiwiT</h1><span class="pill">PAPER ONLY</span></div>
+    <p>Research intelligence and controlled simulation</p>
+  </header>
+  <main>
+    <section class="credentials card">
+      <label>API key<input id="api-key" type="password" autocomplete="off" placeholder="Local operator key"></label>
+      <label>Account<input id="account" value="kiwit-paper-main"></label>
+      <button id="refresh">Refresh</button>
+      <span id="connection" class="muted">Not connected</span>
+    </section>
+
+    <section class="metrics">
+      <article class="card"><span>Cash balance</span><strong id="cash">—</strong><small>INR simulated</small></article>
+      <article class="card"><span>Realized P&amp;L</span><strong id="pnl">—</strong><small>Ledger total</small></article>
+      <article class="card"><span>Positions</span><strong id="position-count">—</strong><small>Open long positions</small></article>
+      <article class="card"><span>Execution</span><strong id="execution">—</strong><small>Safety state</small></article>
+    </section>
+
+    <section class="grid">
+      <article class="card panel">
+        <div class="panel-title"><div><span class="eyebrow">PORTFOLIO</span><h2>Open positions</h2></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Quantity</th><th>Average</th><th>Realized P&amp;L</th></tr></thead><tbody id="positions"><tr><td colspan="4" class="empty">Connect to load positions</td></tr></tbody></table></div>
+      </article>
+
+      <article class="card panel safety">
+        <span class="eyebrow">OPERATOR CONTROL</span><h2>Execution safety</h2>
+        <p>Halting blocks every new simulated fill for this account. It does not alter existing positions.</p>
+        <label>Reason<input id="halt-reason" value="Manual operator safety stop"></label>
+        <div class="actions"><button id="halt" class="danger">Halt execution</button><button id="resume" class="secondary">Resume</button></div>
+      </article>
+    </section>
+
+    <section class="card panel research">
+      <span class="eyebrow">EVIDENCE LIBRARY</span><h2>Ask the kiwiT corpus</h2>
+      <div class="search"><input id="query" placeholder="e.g. Why should stops determine position size?"><button id="search">Retrieve</button></div>
+      <div id="results" class="results"><p class="empty">Results include traceable book pages and research sources.</p></div>
+    </section>
+    <p id="error" role="alert"></p>
+  </main>
+  <script src="/static/dashboard.js" defer></script>
+</body>
+</html>

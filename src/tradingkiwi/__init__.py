@@ -1,0 +1,2 @@
+"""TradingKIWI research package."""
+
