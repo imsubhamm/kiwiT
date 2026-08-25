@@ -4,13 +4,13 @@ import hashlib
 import shutil
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from .manifest import ManifestLog
 from .models import ManifestEntry
-
 
 USER_AGENT = "Mozilla/5.0 kiwiT market-data research"
 
@@ -36,6 +36,9 @@ class NSEArchiveDownloader:
         return f"https://archives.nseindia.com/content/indices/{filename}", filename
 
     def _download(self, source_name: str, uri: str, destination: Path, day: date) -> ManifestEntry | None:
+        parsed = urllib.parse.urlsplit(uri)
+        if parsed.scheme != "https" or parsed.hostname not in {"nsearchives.nseindia.com", "archives.nseindia.com"}:
+            raise ValueError("market-data download URL is not an approved NSE HTTPS origin")
         if destination.exists() and destination.stat().st_size:
             digest = hashlib.sha256(destination.read_bytes()).hexdigest()
             return ManifestEntry(source_name, uri, str(destination), day, datetime.now(UTC), digest, destination.stat().st_size, "cached", {})
@@ -44,7 +47,7 @@ class NSEArchiveDownloader:
         for attempt in range(self.retries):
             try:
                 request = urllib.request.Request(uri, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
-                with urllib.request.urlopen(request, timeout=45) as response, partial.open("wb") as output:
+                with urllib.request.urlopen(request, timeout=45) as response, partial.open("wb") as output:  # nosec B310
                     shutil.copyfileobj(response, output)
                 if partial.stat().st_size == 0:
                     raise ValueError("empty response")
@@ -76,4 +79,3 @@ class NSEArchiveDownloader:
         destination = self.root / "raw" / "nse" / "indices" / f"{day:%Y}" / f"{day:%m}" / filename
         entry = self._download("nse_index_snapshot", uri, destination, day)
         return Path(entry.local_path) if entry else None
-

@@ -4,6 +4,7 @@ import csv
 import io
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,7 +13,6 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
-
 
 ARCHIVE = "https://nsearchives.nseindia.com/content/historical/EQUITIES"
 INDEX_ARCHIVE = "https://archives.nseindia.com/content/indices"
@@ -45,10 +45,13 @@ def adjust_splits(frame: pd.DataFrame, actions: pd.DataFrame) -> pd.DataFrame:
 
 
 def _request(url: str, retries: int = 3) -> bytes | None:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in {"nsearchives.nseindia.com", "archives.nseindia.com"}:
+        raise ValueError("download URL is not an approved NSE HTTPS origin")
     headers = {"User-Agent": "Mozilla/5.0 TradingKIWI research contact=local"}
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:  # nosec B310
                 return response.read()
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -84,14 +87,12 @@ def _extract_index(day: date, payload: bytes) -> dict | None:
     text = payload.decode("utf-8-sig", errors="replace")
     for row in csv.DictReader(io.StringIO(text)):
         if row.get("Index Name", "").strip().upper() == "NIFTY 50":
-            def number(name: str) -> float:
-                return float(row[name].replace(",", ""))
             return {
                 "date": day.isoformat(),
-                "open": number("Open Index Value"),
-                "high": number("High Index Value"),
-                "low": number("Low Index Value"),
-                "close": number("Closing Index Value"),
+                "open": float(row["Open Index Value"].replace(",", "")),
+                "high": float(row["High Index Value"].replace(",", "")),
+                "low": float(row["Low Index Value"].replace(",", "")),
+                "close": float(row["Closing Index Value"].replace(",", "")),
             }
     return None
 

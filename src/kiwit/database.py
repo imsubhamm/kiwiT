@@ -116,16 +116,15 @@ class PostgresDatabase:
                             "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='schema_migrations'"
                         ).fetchall()
                     }
-                    selected = "version"
-                    if "name" in columns:
-                        selected += ", name"
+                    if {"name", "checksum"}.issubset(columns):
+                        statement = "SELECT version, name, checksum FROM schema_migrations"
+                    elif "name" in columns:
+                        statement = "SELECT version, name, NULL FROM schema_migrations"
+                    elif "checksum" in columns:
+                        statement = "SELECT version, NULL, checksum FROM schema_migrations"
                     else:
-                        selected += ", NULL"
-                    if "checksum" in columns:
-                        selected += ", checksum"
-                    else:
-                        selected += ", NULL"
-                    applied = {row[0]: (row[1], row[2]) for row in connection.execute(f"SELECT {selected} FROM schema_migrations")}
+                        statement = "SELECT version, NULL, NULL FROM schema_migrations"
+                    applied = {row[0]: (row[1], row[2]) for row in connection.execute(statement)}
 
                 for migration in migrations:
                     previous = applied.get(migration.version)

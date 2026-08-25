@@ -197,7 +197,8 @@ class LocalKnowledgeIndex:
         rows = self.connection.execute(
             "SELECT c.chunk_id,s.title,s.source_type,s.source_uri,c.page_start,c.page_end,c.content,bm25(knowledge_chunks_fts) "
             "FROM knowledge_chunks_fts JOIN knowledge_chunks c USING(chunk_id) JOIN knowledge_sources s USING(source_id) "
-            f"WHERE knowledge_chunks_fts MATCH ?{filters} ORDER BY bm25(knowledge_chunks_fts) LIMIT ?",
+            # Placeholder count is derived only from the source_types tuple; values remain parameterized.
+            f"WHERE knowledge_chunks_fts MATCH ?{filters} ORDER BY bm25(knowledge_chunks_fts) LIMIT ?",  # nosec B608
             parameters,
         ).fetchall()
         return [SearchHit(*row[:-1], score=-float(row[-1])) for row in rows]
@@ -217,21 +218,21 @@ class PostgresKnowledgeIndex:
     def search(self, query: str, *, limit: int = 6, source_types: tuple[str, ...] = ()) -> list[SearchHit]:
         if not TOKEN.findall(query) or limit < 1:
             return []
-        type_filter = ""
         parameters: list[object] = [query, query]
         if source_types:
-            type_filter = " AND s.source_type = ANY(%s)"
             parameters.append(list(source_types))
         parameters.append(limit)
+        statement = (
+            "SELECT c.chunk_id,s.title,s.source_type,s.source_uri,c.page_start,c.page_end,c.content,"
+            "ts_rank_cd(c.search_vector,websearch_to_tsquery('english',%s)) AS score "
+            "FROM knowledge_chunks c JOIN knowledge_sources s USING(source_id) "
+            "WHERE c.search_vector @@ websearch_to_tsquery('english',%s) "
+        )
+        if source_types:
+            statement += "AND s.source_type = ANY(%s) "
+        statement += "ORDER BY score DESC,c.chunk_id LIMIT %s"
         with self.database.connect(autocommit=True) as connection:
-            rows = connection.execute(
-                "SELECT c.chunk_id,s.title,s.source_type,s.source_uri,c.page_start,c.page_end,c.content,"
-                "ts_rank_cd(c.search_vector,websearch_to_tsquery('english',%s)) AS score "
-                "FROM knowledge_chunks c JOIN knowledge_sources s USING(source_id) "
-                f"WHERE c.search_vector @@ websearch_to_tsquery('english',%s){type_filter} "
-                "ORDER BY score DESC,c.chunk_id LIMIT %s",
-                parameters,
-            ).fetchall()
+            rows = connection.execute(statement, parameters).fetchall()
         return [SearchHit(*row[:-1], score=float(row[-1])) for row in rows]
 
     def stats(self) -> dict[str, int]:

@@ -68,4 +68,6 @@ EC2 bootstrap and merge-to-main deployment are defined under `deploy/` and `.git
 
 Operational endpoints, metrics, alert thresholds, incident response, and rollback are documented in `docs/MONITORING_OPERATIONS.md`.
 
+Application, host, CI, secret-rotation, and infrastructure security requirements are documented in `docs/SECURITY.md`.
+
 The July 2024 endpoint transition is intentionally the default cutoff for this first archival dataset. New-format UDiFF ingestion will be a separate adapter.

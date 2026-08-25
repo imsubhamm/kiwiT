@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .checkpointing import postgres_checkpointer
 from .database import DatabaseSettings, PostgresDatabase
@@ -38,9 +39,14 @@ class SearchRequest(BaseModel):
 
 def _require_api_key(x_kiwit_api_key: Annotated[str | None, Header()] = None) -> None:
     expected = os.getenv("KIWIT_API_KEY", "")
+    previous = os.getenv("KIWIT_PREVIOUS_API_KEY", "")
     if len(expected) < 24:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "API authentication is not configured")
-    if x_kiwit_api_key is None or not secrets.compare_digest(x_kiwit_api_key, expected):
+    supplied = x_kiwit_api_key or ""
+    current_match = secrets.compare_digest(supplied, expected)
+    previous_match = len(previous) >= 24 and secrets.compare_digest(supplied, previous)
+    if not (current_match or previous_match):
+        logger.warning("authentication_failed")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid API key")
 
 
@@ -63,11 +69,20 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None)
         title="kiwiT Control Plane", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None,
         lifespan=lifespan,
     )
+    allowed_hosts = [host.strip() for host in os.getenv("KIWIT_ALLOWED_HOSTS", "testserver,localhost,127.0.0.1").split(",")]
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     static = Path(__file__).with_name("static")
     app.mount("/static", StaticFiles(directory=static), name="static")
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > 65_536:
+                    return JSONResponse({"detail": "request body too large"}, status_code=413)
+            except ValueError:
+                return JSONResponse({"detail": "invalid content length"}, status_code=400)
         request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))[:128]
         started = time.monotonic()
         app.state.metrics.begin()

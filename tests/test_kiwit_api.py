@@ -63,6 +63,21 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/health", headers={"X-Request-ID": "operator-123"})
         self.assertEqual(response.headers["X-Request-ID"], "operator-123")
 
+    def test_untrusted_host_and_large_body_are_rejected(self):
+        self.assertEqual(self.client.get("/health", headers={"Host": "attacker.invalid"}).status_code, 400)
+        response = self.client.post(
+            "/api/v1/research/search",
+            headers={"X-KIWIT-API-Key": self.key, "Content-Length": "65537"},
+            json={"query": "risk"},
+        )
+        self.assertEqual(response.status_code, 413)
+
+    def test_previous_api_key_supports_safe_rotation(self):
+        previous = "a-previous-test-key-that-is-long-enough"
+        with patch.dict(os.environ, {"KIWIT_PREVIOUS_API_KEY": previous}, clear=False):
+            response = self.client.get("/api/v1/paper/accounts/test", headers={"X-KIWIT-API-Key": previous})
+        self.assertEqual(response.status_code, 200)
+
     def test_account_and_kill_switch(self):
         headers = {"X-KIWIT-API-Key": self.key}
         self.assertFalse(self.client.get("/api/v1/paper/accounts/test", headers=headers).json()["execution_halted"])

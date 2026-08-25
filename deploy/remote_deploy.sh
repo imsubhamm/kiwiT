@@ -27,6 +27,10 @@ runuser -u kiwit -- env \
   "$release_dir/.venv/bin/python" "$release_dir/scripts/manage_database.py" migrate --migrations "$release_dir/migrations"
 
 ln -sfn "$release_dir" /opt/kiwit/current
+install -m 0644 "$release_dir/deploy/kiwit-api.service" /etc/systemd/system/kiwit-api.service
+install -m 0644 "$release_dir/deploy/nginx-kiwit.conf" /etc/nginx/conf.d/kiwit.conf
+systemctl daemon-reload
+nginx -t
 systemctl restart kiwit-api
 systemctl reload nginx
 sleep 2
