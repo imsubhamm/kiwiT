@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -13,6 +12,7 @@ from .domain import Instrument, Quote, RiskDecision, Side, TradeProposal
 from .execution import PaperFill
 from .operations import build_operational_report
 from .persistence import canonical_json
+from .promotion import PromotedStrategy
 
 
 @dataclass(frozen=True)
@@ -67,14 +67,43 @@ class PostgresPaperLedger:
                 (datetime.now(UTC), released_by, scope),
             )
 
-    def register_strategy(self, strategy_id: str, version: str, specification: dict[str, Any]) -> None:
-        payload = canonical_json(specification)
-        digest = hashlib.sha256(payload.encode()).hexdigest()
+    def register_promoted_strategy(self, record: PromotedStrategy) -> None:
+        payload = canonical_json(dict(record.specification))
+        gates = canonical_json(dict(record.evidence.gates))
         with self.database.transaction() as connection:
+            existing = connection.execute(
+                "SELECT specification_sha256,status FROM strategy_versions WHERE strategy_id=%s AND version=%s FOR UPDATE",
+                (record.strategy_id, record.version),
+            ).fetchone()
+            if existing and (existing[0] != record.specification_sha256 or existing[1] not in {"paper", "approved"}):
+                raise ValueError(f"strategy version is immutable or not promotable: {record.strategy_id}@{record.version}")
+            existing_promotion = connection.execute(
+                "SELECT run_fingerprint,report_sha256,evidence_gates,approved_by,approval_reason,approved_at "
+                "FROM strategy_promotions WHERE strategy_id=%s AND strategy_version=%s",
+                (record.strategy_id, record.version),
+            ).fetchone()
+            expected_promotion = (
+                record.evidence.run_fingerprint,
+                record.evidence.report_sha256,
+                dict(record.evidence.gates),
+                record.approval.approved_by,
+                record.approval.reason,
+                record.approval.approved_at,
+            )
+            if existing_promotion and tuple(existing_promotion) != expected_promotion:
+                raise ValueError(f"strategy promotion is immutable: {record.strategy_id}@{record.version}")
             connection.execute(
                 "INSERT INTO strategy_versions(strategy_id,version,status,specification,specification_sha256) "
                 "VALUES(%s,%s,'paper',%s::jsonb,%s) ON CONFLICT(strategy_id,version) DO NOTHING",
-                (strategy_id, version, payload, digest),
+                (record.strategy_id, record.version, payload, record.specification_sha256),
+            )
+            connection.execute(
+                "INSERT INTO strategy_promotions(promotion_id,strategy_id,strategy_version,run_fingerprint,report_sha256,"
+                "evidence_gates,approved_by,approval_reason,approved_at) VALUES(%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s) "
+                "ON CONFLICT(strategy_id,strategy_version) DO NOTHING",
+                (uuid4(), record.strategy_id, record.version, record.evidence.run_fingerprint,
+                 record.evidence.report_sha256, gates, record.approval.approved_by, record.approval.reason,
+                 record.approval.approved_at),
             )
 
     def register_instrument(self, instrument: Instrument, *, valid_from: str = "2000-01-01") -> UUID:
@@ -96,6 +125,16 @@ class PostgresPaperLedger:
 
     def stage_proposal(self, proposal: TradeProposal, instrument_id: UUID) -> None:
         with self.database.transaction() as connection:
+            promoted = connection.execute(
+                "SELECT EXISTS(SELECT 1 FROM strategy_versions s JOIN strategy_promotions p "
+                "ON p.strategy_id=s.strategy_id AND p.strategy_version=s.version "
+                "WHERE s.strategy_id=%s AND s.version=%s AND s.status IN ('paper','approved'))",
+                (proposal.strategy_id, proposal.strategy_version),
+            ).fetchone()[0]
+            if not promoted:
+                raise PermissionError(
+                    f"strategy is not approved for paper trading: {proposal.strategy_id}@{proposal.strategy_version}"
+                )
             connection.execute(
                 "INSERT INTO trade_proposals(proposal_id,idempotency_key,strategy_id,strategy_version,instrument_id,side,"
                 "signal_at,entry_price,stop_price,target_price,status,rationale) "
@@ -157,7 +196,9 @@ class PostgresPaperLedger:
             ).fetchone()
             approved = connection.execute(
                 "SELECT EXISTS(SELECT 1 FROM trade_proposals p JOIN human_reviews h USING(proposal_id) "
-                "JOIN risk_decisions r USING(proposal_id) WHERE p.proposal_id=%s AND p.status='approved' "
+                "JOIN risk_decisions r USING(proposal_id) JOIN strategy_promotions sp "
+                "ON sp.strategy_id=p.strategy_id AND sp.strategy_version=p.strategy_version "
+                "WHERE p.proposal_id=%s AND p.status='approved' "
                 "AND h.approved AND r.decision='approve' AND r.quantity=%s)", (proposal.proposal_id, risk.quantity),
             ).fetchone()[0]
             if blocked or not account or account[1] != "active" or not approved:

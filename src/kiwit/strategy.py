@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Mapping, Protocol
+from typing import Protocol
 
 from .domain import Instrument, Side, TradeProposal
 
@@ -44,6 +45,12 @@ class StrategyRegistry:
             return self._strategies[(strategy_id, version)]
         except KeyError as exc:
             raise KeyError(f"unknown strategy: {strategy_id}@{version}") from exc
+
+    def get_for_paper(self, strategy_id: str, version: str) -> Strategy:
+        strategy = self.get(strategy_id, version)
+        if strategy.metadata.status not in {"paper", "approved"}:
+            raise PermissionError(f"strategy is not approved for paper trading: {strategy_id}@{version}")
+        return strategy
 
 
 class TrendPullbackResearchStrategy:
@@ -88,4 +95,3 @@ class DonchianBaselineStrategy:
             target_price=None,
             rationale={"rule": "close_above_prior_50_day_high"},
         )
-

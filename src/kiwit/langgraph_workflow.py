@@ -20,6 +20,7 @@ from .domain import (
     WorkflowStatus,
 )
 from .execution import PaperFill
+from .promotion import PromotedStrategyCatalog
 from .risk import RiskEngine
 
 
@@ -129,6 +130,7 @@ def build_paper_trading_graph(
     broker: Any,
     audit: HashChainAuditLog,
     checkpointer: Any,
+    promoted_strategies: PromotedStrategyCatalog,
     *,
     maximum_quote_age_seconds: int = 15,
 ) -> Any:
@@ -140,6 +142,8 @@ def build_paper_trading_graph(
         quote = _quote(state["quote"])
         now = datetime.now(UTC)
         quote_time = quote.timestamp.astimezone(UTC)
+        if not promoted_strategies.is_promoted(proposal.strategy_id, proposal.strategy_version):
+            return {"status": WorkflowStatus.REJECTED.value, "message": "STRATEGY_NOT_PROMOTED"}
         if quote.instrument != proposal.instrument:
             return {"status": WorkflowStatus.REJECTED.value, "message": "QUOTE_INSTRUMENT_MISMATCH"}
         if quote_time > now or (now - quote_time).total_seconds() > maximum_quote_age_seconds:

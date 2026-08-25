@@ -15,6 +15,13 @@ from kiwit.config import load_config
 from kiwit.domain import Instrument, PortfolioSnapshot, Quote, Side, TradeProposal, WorkflowStatus
 from kiwit.execution import PaperBroker
 from kiwit.langgraph_workflow import build_paper_trading_graph, graph_input
+from kiwit.promotion import (
+    MANDATORY_EVIDENCE_GATES,
+    PromotedStrategy,
+    PromotedStrategyCatalog,
+    PromotionEvidence,
+    approval_now,
+)
 from kiwit.risk import RiskEngine
 
 
@@ -32,8 +39,15 @@ class LangGraphWorkflowTests(unittest.TestCase):
     def build(self, temp: str):
         audit = HashChainAuditLog(Path(temp) / "graph-audit.jsonl")
         broker = PaperBroker()
+        catalog = PromotedStrategyCatalog()
+        catalog.register(PromotedStrategy(
+            "baseline", "1", {"rule": "test-only"},
+            PromotionEvidence("a" * 64, "b" * 64, {gate: True for gate in MANDATORY_EVIDENCE_GATES}),
+            approval_now("test-reviewer", "test fixture passed every evidence gate"),
+        ))
         graph = build_paper_trading_graph(
-            RiskEngine(load_config("config/kiwit.toml").risk), broker, audit, InMemorySaver(), maximum_quote_age_seconds=60,
+            RiskEngine(load_config("config/kiwit.toml").risk), broker, audit, InMemorySaver(), catalog,
+            maximum_quote_age_seconds=60,
         )
         return graph, broker, audit
 
@@ -73,6 +87,22 @@ class LangGraphWorkflowTests(unittest.TestCase):
                 config={"configurable": {"thread_id": "stale"}},
             )
             self.assertEqual(final["status"], WorkflowStatus.REJECTED.value)
+            self.assertNotIn("__interrupt__", final)
+            self.assertIsNone(broker.fill_for(proposal.proposal_id))
+
+    def test_unpromoted_strategy_fails_before_risk_or_human_review(self):
+        with tempfile.TemporaryDirectory() as temp:
+            graph, broker, _ = self.build(temp)
+            proposal = TradeProposal(
+                "research_only", "1", self.instrument, Side.BUY, self.now - timedelta(seconds=2),
+                Decimal(250), Decimal(245), None,
+            )
+            final = graph.invoke(
+                graph_input(proposal, self.quote, self.portfolio, Decimal("0.10")),
+                config={"configurable": {"thread_id": "unpromoted"}},
+            )
+            self.assertEqual(final["status"], WorkflowStatus.REJECTED.value)
+            self.assertEqual(final["message"], "STRATEGY_NOT_PROMOTED")
             self.assertNotIn("__interrupt__", final)
             self.assertIsNone(broker.fill_for(proposal.proposal_id))
 
