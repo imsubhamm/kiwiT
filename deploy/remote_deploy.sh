@@ -20,7 +20,11 @@ runuser -u kiwit -- "$release_dir/.venv/bin/python" -m pip install --disable-pip
 set -a
 source /etc/kiwit/kiwit.env
 set +a
-runuser -u kiwit --preserve-environment -- "$release_dir/.venv/bin/python" "$release_dir/scripts/manage_database.py" migrate --migrations "$release_dir/migrations"
+runuser -u kiwit -- env \
+  HOME=/opt/kiwit \
+  KIWIT_DATABASE_URL="$KIWIT_DATABASE_URL" \
+  KIWIT_DB_CONNECT_TIMEOUT="${KIWIT_DB_CONNECT_TIMEOUT:-15}" \
+  "$release_dir/.venv/bin/python" "$release_dir/scripts/manage_database.py" migrate --migrations "$release_dir/migrations"
 
 ln -sfn "$release_dir" /opt/kiwit/current
 systemctl restart kiwit-api
