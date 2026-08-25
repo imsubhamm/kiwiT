@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
+from .database import PostgresDatabase
+
 PAGE_MARKER = re.compile(r"^\s*=== PAGE (\d+) ===\s*$", re.MULTILINE)
 TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.%-]*")
 
@@ -203,4 +205,37 @@ class LocalKnowledgeIndex:
     def stats(self) -> dict[str, int]:
         sources = self.connection.execute("SELECT count(*) FROM knowledge_sources").fetchone()[0]
         chunks = self.connection.execute("SELECT count(*) FROM knowledge_chunks").fetchone()[0]
+        return {"sources": sources, "chunks": chunks}
+
+
+class PostgresKnowledgeIndex:
+    """Read-only production retrieval over PostgreSQL's indexed search vector."""
+
+    def __init__(self, database: PostgresDatabase) -> None:
+        self.database = database
+
+    def search(self, query: str, *, limit: int = 6, source_types: tuple[str, ...] = ()) -> list[SearchHit]:
+        if not TOKEN.findall(query) or limit < 1:
+            return []
+        type_filter = ""
+        parameters: list[object] = [query, query]
+        if source_types:
+            type_filter = " AND s.source_type = ANY(%s)"
+            parameters.append(list(source_types))
+        parameters.append(limit)
+        with self.database.connect(autocommit=True) as connection:
+            rows = connection.execute(
+                "SELECT c.chunk_id,s.title,s.source_type,s.source_uri,c.page_start,c.page_end,c.content,"
+                "ts_rank_cd(c.search_vector,websearch_to_tsquery('english',%s)) AS score "
+                "FROM knowledge_chunks c JOIN knowledge_sources s USING(source_id) "
+                f"WHERE c.search_vector @@ websearch_to_tsquery('english',%s){type_filter} "
+                "ORDER BY score DESC,c.chunk_id LIMIT %s",
+                parameters,
+            ).fetchall()
+        return [SearchHit(*row[:-1], score=float(row[-1])) for row in rows]
+
+    def stats(self) -> dict[str, int]:
+        with self.database.connect(autocommit=True) as connection:
+            sources = connection.execute("SELECT count(*) FROM knowledge_sources").fetchone()[0]
+            chunks = connection.execute("SELECT count(*) FROM knowledge_chunks").fetchone()[0]
         return {"sources": sources, "chunks": chunks}

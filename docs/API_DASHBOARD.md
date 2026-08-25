@@ -23,3 +23,4 @@ Open `http://127.0.0.1:8000/dashboard` and enter the API key. The dashboard keep
 - Workflow responses expose only status, proposal ID, fill presence, and checkpoint ID.
 - Production internet access requires a TLS reverse proxy, identity-aware authentication, rate limiting, request-size limits, and secret rotation.
 - The API contains no live-order or trade-creation endpoint.
+- Production evidence retrieval reads the indexed Neon knowledge tables; SQLite remains a local research adapter only.

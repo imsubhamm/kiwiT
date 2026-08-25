@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .checkpointing import postgres_checkpointer
 from .database import DatabaseSettings, PostgresDatabase
 from .paper_trading import PostgresPaperLedger
-from .rag import LocalKnowledgeIndex
+from .rag import LocalKnowledgeIndex, PostgresKnowledgeIndex
 
 
 class HaltRequest(BaseModel):
@@ -45,9 +45,9 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None)
     async def lifespan(app: FastAPI):
         database = PostgresDatabase(DatabaseSettings.from_env()) if ledger is None else None
         app.state.ledger = ledger or PostgresPaperLedger(database)
-        app.state.knowledge = knowledge_index or LocalKnowledgeIndex("data/local/kiwit_knowledge.sqlite3")
+        app.state.knowledge = knowledge_index or PostgresKnowledgeIndex(database)
         yield
-        if owns_index:
+        if owns_index and isinstance(app.state.knowledge, LocalKnowledgeIndex):
             app.state.knowledge.close()
 
     app = FastAPI(
