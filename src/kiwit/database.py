@@ -104,57 +104,57 @@ class PostgresDatabase:
     def migrate(self, directory: str | Path) -> list[int]:
         migrations = discover_migrations(directory)
         applied_now: list[int] = []
-        with self.connect(autocommit=True) as connection:
-            connection.execute("SELECT pg_advisory_lock(%s)", (ADVISORY_LOCK_ID,))
-            try:
-                table_exists = connection.execute("SELECT to_regclass('public.schema_migrations')").fetchone()[0]
-                applied: dict[int, tuple[str | None, str | None]] = {}
-                if table_exists:
-                    columns = {
-                        row[0]
-                        for row in connection.execute(
-                            "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='schema_migrations'"
-                        ).fetchall()
-                    }
-                    if {"name", "checksum"}.issubset(columns):
-                        statement = "SELECT version, name, checksum FROM schema_migrations"
-                    elif "name" in columns:
-                        statement = "SELECT version, name, NULL FROM schema_migrations"
-                    elif "checksum" in columns:
-                        statement = "SELECT version, NULL, checksum FROM schema_migrations"
-                    else:
-                        statement = "SELECT version, NULL, NULL FROM schema_migrations"
-                    applied = {row[0]: (row[1], row[2]) for row in connection.execute(statement)}
-
-                for migration in migrations:
-                    previous = applied.get(migration.version)
-                    if previous:
-                        if previous[1] and previous[1] != migration.checksum:
-                            raise MigrationError(f"checksum mismatch for applied migration {migration.path.name}")
-                        continue
-                    connection.execute(migration.path.read_text())
-                    columns = {
-                        row[0]
-                        for row in connection.execute(
-                            "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='schema_migrations'"
-                        ).fetchall()
-                    }
-                    if {"name", "checksum"}.issubset(columns):
-                        connection.execute(
-                            "UPDATE schema_migrations SET name=%s, checksum=%s WHERE version=%s",
-                            (migration.name, migration.checksum, migration.version),
-                        )
-                    applied_now.append(migration.version)
-
-                # Backfill checksums for migrations created before checksum tracking.
+        # A transaction-scoped lock is required for transaction-pooling services such as Neon.
+        # Session locks combined with autocommit can be acquired and released on different backends.
+        with self.connect() as connection, connection.transaction():
+            connection.execute("SELECT pg_advisory_xact_lock(%s)", (ADVISORY_LOCK_ID,))
+            table_exists = connection.execute("SELECT to_regclass('public.schema_migrations')").fetchone()[0]
+            applied: dict[int, tuple[str | None, str | None]] = {}
+            columns: set[str] = set()
+            if table_exists:
+                columns = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='schema_migrations'"
+                    ).fetchall()
+                }
                 if {"name", "checksum"}.issubset(columns):
-                    for migration in migrations:
-                        connection.execute(
-                            "UPDATE schema_migrations SET name=COALESCE(name,%s), checksum=COALESCE(checksum,%s) WHERE version=%s",
-                            (migration.name, migration.checksum, migration.version),
-                        )
-            finally:
-                connection.execute("SELECT pg_advisory_unlock(%s)", (ADVISORY_LOCK_ID,))
+                    statement = "SELECT version, name, checksum FROM schema_migrations"
+                elif "name" in columns:
+                    statement = "SELECT version, name, NULL FROM schema_migrations"
+                elif "checksum" in columns:
+                    statement = "SELECT version, NULL, checksum FROM schema_migrations"
+                else:
+                    statement = "SELECT version, NULL, NULL FROM schema_migrations"
+                applied = {row[0]: (row[1], row[2]) for row in connection.execute(statement)}
+
+            for migration in migrations:
+                previous = applied.get(migration.version)
+                if previous:
+                    if previous[1] and previous[1] != migration.checksum:
+                        raise MigrationError(f"checksum mismatch for applied migration {migration.path.name}")
+                    continue
+                connection.execute(migration.path.read_text())
+                columns = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='schema_migrations'"
+                    ).fetchall()
+                }
+                if {"name", "checksum"}.issubset(columns):
+                    connection.execute(
+                        "UPDATE schema_migrations SET name=%s, checksum=%s WHERE version=%s",
+                        (migration.name, migration.checksum, migration.version),
+                    )
+                applied_now.append(migration.version)
+
+            # Backfill checksums for migrations created before checksum tracking.
+            if {"name", "checksum"}.issubset(columns):
+                for migration in migrations:
+                    connection.execute(
+                        "UPDATE schema_migrations SET name=COALESCE(name,%s), checksum=COALESCE(checksum,%s) WHERE version=%s",
+                        (migration.name, migration.checksum, migration.version),
+                    )
         return applied_now
 
     def execute(self, statement: str, parameters: Sequence[Any] = ()) -> int:
