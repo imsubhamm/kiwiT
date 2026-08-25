@@ -21,6 +21,7 @@ from .database import DatabaseSettings, PostgresDatabase
 from .observability import Metrics, configure_logging
 from .paper_trading import PostgresPaperLedger
 from .rag import LocalKnowledgeIndex, PostgresKnowledgeIndex
+from .research_status import regime_router_status
 
 logger = logging.getLogger("kiwit.api")
 
@@ -145,6 +146,10 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None,
     @app.get("/metrics", dependencies=protected, response_class=PlainTextResponse)
     def metrics(request: Request) -> str:
         return request.app.state.metrics.render()
+
+    @app.get("/api/v1/research/regime-router", dependencies=protected)
+    def regime_router_evidence() -> dict[str, Any]:
+        return regime_router_status()
 
     @app.get("/dashboard", include_in_schema=False)
     def dashboard() -> FileResponse:

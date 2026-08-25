@@ -112,6 +112,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["automation"]["enabled"])
 
+    def test_regime_router_evidence_is_protected_and_rejected(self):
+        endpoint = "/api/v1/research/regime-router"
+        self.assertEqual(self.client.get(endpoint).status_code, 401)
+        response = self.client.get(endpoint, headers={"X-Kiwit-Api-Key": self.key})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["promoted"])
+        self.assertEqual(payload["automation"]["state"], "locked")
+        self.assertEqual(sum(not gate["passed"] for gate in payload["gates"]), 3)
+
     def test_database_outage_fails_readiness_closed(self):
         class FailedDatabase:
             def healthcheck(self):
