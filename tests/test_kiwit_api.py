@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from fastapi.testclient import TestClient
 
 from kiwit.api import create_app
+from kiwit.auth import MemorySessionAuth
 
 
 class FakeLedger:
@@ -138,5 +139,27 @@ class ApiTests(unittest.TestCase):
 
     def test_security_headers_are_set(self):
         response = self.client.get("/dashboard")
+        self.assertEqual(response.history[0].status_code, 303)
         self.assertEqual(response.headers["x-frame-options"], "DENY")
         self.assertIn("default-src 'self'", response.headers["content-security-policy"])
+
+    def test_user_can_login_use_session_and_logout(self):
+        password = "a-strong-test-password-value"
+        auth = MemorySessionAuth("super.admin@kiwit.com", password)
+        with TestClient(
+            create_app(
+                ledger=FakeLedger(), knowledge_index=FakeKnowledge(), broker_client=FakeBroker(), auth_service=auth
+            ),
+            base_url="https://testserver",
+        ) as client:
+            self.assertEqual(client.get("/dashboard", follow_redirects=False).status_code, 303)
+            login = client.post(
+                "/api/v1/auth/login", json={"email": "super.admin@kiwit.com", "password": password}
+            )
+            self.assertEqual(login.status_code, 200)
+            self.assertIn("HttpOnly", login.headers["set-cookie"])
+            self.assertIn("Secure", login.headers["set-cookie"])
+            self.assertEqual(client.get("/dashboard", follow_redirects=False).status_code, 200)
+            self.assertEqual(client.get("/api/v1/auth/me").json()["role"], "super_admin")
+            client.post("/api/v1/auth/logout")
+            self.assertEqual(client.get("/api/v1/auth/me").status_code, 401)

@@ -5,16 +5,19 @@ import os
 import secrets
 import time
 import uuid
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .auth import MemorySessionAuth, PostgresSessionAuth
 from .brokers import BrokerApiError, GrowwBrokerClient, GrowwSettings
 from .checkpointing import postgres_checkpointer
 from .database import DatabaseSettings, PostgresDatabase
@@ -39,20 +42,33 @@ class SearchRequest(BaseModel):
     limit: int = Field(default=6, ge=1, le=12)
 
 
-def _require_api_key(x_kiwit_api_key: Annotated[str | None, Header()] = None) -> None:
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=1, max_length=256)
+
+
+def _valid_api_key(supplied: str) -> bool:
     expected = os.getenv("KIWIT_API_KEY", "")
     previous = os.getenv("KIWIT_PREVIOUS_API_KEY", "")
-    if len(expected) < 24:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "API authentication is not configured")
-    supplied = x_kiwit_api_key or ""
-    current_match = secrets.compare_digest(supplied, expected)
+    current_match = len(expected) >= 24 and secrets.compare_digest(supplied, expected)
     previous_match = len(previous) >= 24 and secrets.compare_digest(supplied, previous)
-    if not (current_match or previous_match):
-        logger.warning("authentication_failed")
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid API key")
+    return current_match or previous_match
 
 
-def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None, broker_client: Any | None = None) -> FastAPI:
+def _require_authenticated(request: Request, x_kiwit_api_key: Annotated[str | None, Header()] = None) -> None:
+    if _valid_api_key(x_kiwit_api_key or ""):
+        return
+    token = request.cookies.get("kiwit_session", "")
+    if token and request.app.state.auth.authenticate(token):
+        return
+    logger.warning("authentication_failed")
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
+
+
+def create_app(
+    *, ledger: Any | None = None, knowledge_index: Any | None = None, broker_client: Any | None = None,
+    auth_service: Any | None = None,
+) -> FastAPI:
     owns_index = knowledge_index is None
     configure_logging()
 
@@ -70,6 +86,12 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None,
             except ValueError:
                 app.state.broker = None
         app.state.metrics = Metrics()
+        app.state.auth = auth_service or (
+            PostgresSessionAuth(database) if database is not None
+            else MemorySessionAuth("disabled@example.invalid", secrets.token_urlsafe(32))
+        )
+        app.state.auth.bootstrap_admin()
+        app.state.login_failures = defaultdict(deque)
         yield
         if owns_index and isinstance(app.state.knowledge, LocalKnowledgeIndex):
             app.state.knowledge.close()
@@ -117,7 +139,7 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None,
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
-    protected = [Depends(_require_api_key)]
+    protected = [Depends(_require_authenticated)]
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -151,8 +173,53 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None,
     def regime_router_evidence() -> dict[str, Any]:
         return regime_router_status()
 
+    @app.get("/login", include_in_schema=False)
+    def login_page(request: Request) -> Any:
+        token = request.cookies.get("kiwit_session", "")
+        if token and request.app.state.auth.authenticate(token):
+            return RedirectResponse("/dashboard", status_code=303)
+        return FileResponse(static / "login.html")
+
+    @app.post("/api/v1/auth/login")
+    def login(body: LoginRequest, request: Request) -> JSONResponse:
+        address = request.client.host if request.client else "unknown"
+        now = datetime.now(UTC)
+        failures = request.app.state.login_failures[address]
+        cutoff = now - timedelta(minutes=5)
+        while failures and failures[0] < cutoff:
+            failures.popleft()
+        if len(failures) >= 5:
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many login attempts; retry later")
+        authenticated = request.app.state.auth.login(body.email, body.password, address)
+        if authenticated is None:
+            failures.append(now)
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid email or password")
+        failures.clear()
+        token, user = authenticated
+        response = JSONResponse({"status": "authenticated", "email": user.email, "role": user.role})
+        response.set_cookie(
+            "kiwit_session", token, max_age=12 * 60 * 60, httponly=True,
+            secure=os.getenv("KIWIT_SECURE_COOKIES", "true").lower() == "true", samesite="strict", path="/",
+        )
+        return response
+
+    @app.post("/api/v1/auth/logout")
+    def logout(request: Request) -> JSONResponse:
+        request.app.state.auth.logout(request.cookies.get("kiwit_session", ""))
+        response = JSONResponse({"status": "signed_out"})
+        response.delete_cookie("kiwit_session", path="/", secure=True, httponly=True, samesite="strict")
+        return response
+
+    @app.get("/api/v1/auth/me", dependencies=protected)
+    def current_user(request: Request) -> dict[str, str]:
+        user = request.app.state.auth.authenticate(request.cookies.get("kiwit_session", ""))
+        return {"email": user.email, "role": user.role} if user else {"email": "service", "role": "api_key"}
+
     @app.get("/dashboard", include_in_schema=False)
-    def dashboard() -> FileResponse:
+    def dashboard(request: Request) -> Any:
+        token = request.cookies.get("kiwit_session", "")
+        if not token or not request.app.state.auth.authenticate(token):
+            return RedirectResponse("/login", status_code=303)
         return FileResponse(static / "dashboard.html")
 
     @app.get("/api/v1/paper/accounts/{account_id}", dependencies=protected)
