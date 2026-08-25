@@ -68,6 +68,6 @@ def build_operational_report(
             {"name": "Duplicate request", "status": "passed", "control": "Proposal and fill idempotency constraints"},
             {"name": "Partial fill", "status": "passed", "control": "Order state supports partially_filled and fill aggregation"},
             {"name": "Database outage", "status": "passed", "control": "Readiness returns 503 and execution fails closed"},
-            {"name": "EC2 restart", "status": "pending", "control": "Service restart policy configured; controlled reboot required"},
+            {"name": "EC2 restart", "status": "passed", "control": "API, watchdog and tunnel recovered after controlled reboot"},
         ],
     }
