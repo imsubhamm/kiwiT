@@ -120,7 +120,10 @@ def create_app(*, ledger: Any | None = None, knowledge_index: Any | None = None,
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "service": "kiwit-api", "execution": "paper-only"}
+        return {
+            "status": "ok", "service": "kiwit-api", "execution": "paper-only",
+            "release": os.getenv("KIWIT_RELEASE_SHA", "development"),
+        }
 
     @app.get("/live")
     def live() -> dict[str, str]:

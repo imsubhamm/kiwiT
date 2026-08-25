@@ -58,6 +58,7 @@ class ApiTests(unittest.TestCase):
 
     def test_health_is_public_but_account_is_protected(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+        self.assertEqual(self.client.get("/health").json()["release"], "development")
         self.assertEqual(self.client.get("/live").status_code, 200)
         self.assertEqual(self.client.get("/ready").json()["database"], "injected")
         self.assertEqual(self.client.get("/api/v1/paper/accounts/test").status_code, 401)

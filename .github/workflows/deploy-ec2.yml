@@ -19,6 +19,7 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: production
     steps:
       - uses: actions/checkout@v4
@@ -27,21 +28,24 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
           KIWIT_DATABASE_URL: ${{ secrets.KIWIT_DATABASE_URL }}
           KIWIT_API_KEY: ${{ secrets.KIWIT_API_KEY }}
           KIWIT_GROWW_ACCESS_TOKEN: ${{ secrets.KIWIT_GROWW_ACCESS_TOKEN }}
         run: |
-          test -n "$EC2_HOST" && test -n "$EC2_USER" && test -n "$EC2_SSH_KEY"
+          test -n "$EC2_HOST" && test -n "$EC2_USER" && test -n "$EC2_SSH_KEY" && test -n "$EC2_KNOWN_HOSTS"
           test -n "$KIWIT_DATABASE_URL" && test -n "$KIWIT_API_KEY"
       - name: Prepare SSH
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
         run: |
           install -d -m 0700 ~/.ssh
           printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/kiwit.pem
           chmod 0600 ~/.ssh/kiwit.pem
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/known_hosts
       - name: Build release archive
         run: git archive --format=tar.gz --output=/tmp/kiwit-release.tar.gz HEAD
       - name: Upload release and environment
@@ -50,15 +54,17 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
           KIWIT_DATABASE_URL: ${{ secrets.KIWIT_DATABASE_URL }}
           KIWIT_API_KEY: ${{ secrets.KIWIT_API_KEY }}
+          KIWIT_GROWW_ACCESS_TOKEN: ${{ secrets.KIWIT_GROWW_ACCESS_TOKEN }}
         run: |
           scp -i ~/.ssh/kiwit.pem /tmp/kiwit-release.tar.gz "$EC2_USER@$EC2_HOST:/tmp/kiwit-release.tar.gz"
           scp -i ~/.ssh/kiwit.pem deploy/remote_deploy.sh "$EC2_USER@$EC2_HOST:/tmp/remote_deploy.sh"
-          printf "KIWIT_DATABASE_URL='%s'\nKIWIT_API_KEY='%s'\nKIWIT_DB_CONNECT_TIMEOUT=15\nKIWIT_ALLOWED_HOSTS='%s,localhost,127.0.0.1'\nKIWIT_GROWW_ACCESS_TOKEN='%s'\nKIWIT_BROKER_TIMEOUT_SECONDS=8\n" "$KIWIT_DATABASE_URL" "$KIWIT_API_KEY" "$EC2_HOST" "$KIWIT_GROWW_ACCESS_TOKEN" > /tmp/kiwit.env
+          printf "KIWIT_DATABASE_URL='%s'\nKIWIT_API_KEY='%s'\nKIWIT_DB_CONNECT_TIMEOUT=15\nKIWIT_ALLOWED_HOSTS='%s,localhost,127.0.0.1'\nKIWIT_GROWW_ACCESS_TOKEN='%s'\nKIWIT_BROKER_TIMEOUT_SECONDS=8\nKIWIT_RELEASE_SHA='%s'\n" "$KIWIT_DATABASE_URL" "$KIWIT_API_KEY" "$EC2_HOST" "$KIWIT_GROWW_ACCESS_TOKEN" "$GITHUB_SHA" > /tmp/kiwit.env
           scp -i ~/.ssh/kiwit.pem /tmp/kiwit.env "$EC2_USER@$EC2_HOST:/tmp/kiwit.env"
       - name: Deploy and health check
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
-          ssh -i ~/.ssh/kiwit.pem "$EC2_USER@$EC2_HOST" 'sudo install -o root -g kiwit -m 0640 /tmp/kiwit.env /etc/kiwit/kiwit.env && sudo bash /tmp/remote_deploy.sh /tmp/kiwit-release.tar.gz'
+          ssh -i ~/.ssh/kiwit.pem "$EC2_USER@$EC2_HOST" "sudo install -o root -g kiwit -m 0640 /tmp/kiwit.env /etc/kiwit/kiwit.env && sudo bash /tmp/remote_deploy.sh /tmp/kiwit-release.tar.gz '$GITHUB_SHA'"
           curl --fail --retry 6 --retry-delay 5 --connect-timeout 5 --max-time 20 "http://$EC2_HOST/ready"
+          test "$(curl --fail --silent --connect-timeout 5 --max-time 20 "http://$EC2_HOST/health" | python -c 'import json,sys; print(json.load(sys.stdin)["release"])')" = "$GITHUB_SHA"
