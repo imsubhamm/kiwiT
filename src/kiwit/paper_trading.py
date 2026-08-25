@@ -11,8 +11,8 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from .database import PostgresDatabase
 from .domain import Instrument, Quote, RiskDecision, Side, TradeProposal
 from .execution import PaperFill
-from .persistence import canonical_json
 from .operations import build_operational_report
+from .persistence import canonical_json
 
 
 @dataclass(frozen=True)
