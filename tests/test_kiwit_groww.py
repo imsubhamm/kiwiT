@@ -1,7 +1,9 @@
 import json
 import os
 import sys
+import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -65,6 +67,31 @@ class GrowwBrokerTests(unittest.TestCase):
         with self.assertRaises(BrokerExecutionDisabled):
             client.cancel_order("order-123")
         self.assertEqual(transport.requests, [])
+
+    def test_api_key_secret_flow_generates_and_caches_access_token(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = str(Path(directory) / "token.json")
+            responses = [
+                {"token": "generated-access-token-long-enough", "expiry": (datetime.now(UTC) + timedelta(hours=3)).isoformat()},
+                {"status": "SUCCESS", "payload": {"nse_enabled": True}},
+            ]
+
+            class SequentialTransport:
+                def __init__(self):
+                    self.requests = []
+
+                def __call__(self, request, timeout):
+                    self.requests.append((request, timeout))
+                    return 200, json.dumps(responses.pop(0)).encode()
+
+            transport = SequentialTransport()
+            settings = GrowwSettings(
+                access_token="api-key-that-is-long-enough", api_secret="test-secret", token_cache_path=cache,
+            )
+            self.assertTrue(GrowwBrokerClient(settings, transport).profile()["nse_enabled"])
+            self.assertTrue(transport.requests[0][0].full_url.endswith("/v1/token/api/access"))
+            self.assertEqual(transport.requests[1][0].get_header("Authorization"), "Bearer generated-access-token-long-enough")
+            self.assertEqual(Path(cache).stat().st_mode & 0o777, 0o600)
 
     def test_environment_requires_a_real_token_length(self):
         with (

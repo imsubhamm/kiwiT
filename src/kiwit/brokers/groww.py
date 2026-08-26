@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 GROWW_ORIGIN = "https://api.groww.in"
@@ -26,9 +30,11 @@ class BrokerExecutionDisabled(PermissionError):
 @dataclass(frozen=True)
 class GrowwSettings:
     access_token: str = field(repr=False)
+    api_secret: str = field(default="", repr=False)
     timeout_seconds: int = 8
     base_url: str = GROWW_ORIGIN
     allow_order_mutations: bool = False
+    token_cache_path: str = "/opt/kiwit/shared/groww-access-token.json"
 
     @classmethod
     def from_env(cls) -> GrowwSettings:
@@ -38,7 +44,10 @@ class GrowwSettings:
         timeout = int(os.getenv("KIWIT_BROKER_TIMEOUT_SECONDS", "8"))
         if not 1 <= timeout <= 30:
             raise ValueError("broker timeout must be between 1 and 30 seconds")
-        return cls(access_token=token, timeout_seconds=timeout)
+        return cls(
+            access_token=token, api_secret=os.getenv("KIWIT_GROWW_API_SECRET", ""), timeout_seconds=timeout,
+            token_cache_path=os.getenv("KIWIT_GROWW_TOKEN_CACHE", "/opt/kiwit/shared/groww-access-token.json"),
+        )
 
     def __post_init__(self) -> None:
         parsed = urllib.parse.urlsplit(self.base_url)
@@ -62,6 +71,53 @@ class GrowwBrokerClient:
         self.settings = settings
         self.transport = transport
 
+    def _authorization_token(self) -> str:
+        if not self.settings.api_secret:
+            return self.settings.access_token
+        cache = Path(self.settings.token_cache_path)
+        try:
+            saved = json.loads(cache.read_text())
+            expires = datetime.fromisoformat(saved["expiry"])
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=UTC)
+            if expires > datetime.now(UTC) + timedelta(minutes=2) and len(saved.get("token", "")) >= 20:
+                return saved["token"]
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+        timestamp = str(int(time.time()))
+        checksum = hashlib.sha256((self.settings.api_secret + timestamp).encode()).hexdigest()
+        request = urllib.request.Request(
+            f"{self.settings.base_url}/v1/token/api/access", method="POST",
+            data=json.dumps({"key_type": "approval", "checksum": checksum, "timestamp": timestamp}).encode(),
+            headers={"Accept": "application/json", "Content-Type": "application/json",
+                     "Authorization": f"Bearer {self.settings.access_token}"},
+        )
+        try:
+            status_code, body = self.transport(request, self.settings.timeout_seconds)
+        except urllib.error.HTTPError as error:
+            if error.code == 403:
+                raise BrokerApiError("Groww session approval is required") from error
+            raise BrokerApiError(f"Groww token request rejected with HTTP {error.code}") from error
+        except (TimeoutError, urllib.error.URLError) as error:
+            raise BrokerApiError("Groww token request unavailable") from error
+        if status_code != 200:
+            raise BrokerApiError(f"Groww token endpoint returned HTTP {status_code}")
+        try:
+            decoded = json.loads(body)
+            token = decoded["token"]
+            expiry = decoded.get("expiry") or (datetime.now(UTC) + timedelta(hours=18)).isoformat()
+            if len(token) < 20:
+                raise ValueError
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+            raise BrokerApiError("Groww token response is invalid") from error
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps({"token": token, "expiry": expiry}))
+            cache.chmod(0o600)
+        except OSError as error:
+            raise BrokerApiError("Groww token cache is unavailable") from error
+        return token
+
     def _request(self, method: str, path: str, *, query: dict[str, str] | None = None) -> dict[str, Any]:
         if not path.startswith("/v1/") or ".." in path:
             raise ValueError("invalid Groww API path")
@@ -73,7 +129,7 @@ class GrowwBrokerClient:
             method=method,
             headers={
                 "Accept": "application/json",
-                "Authorization": f"Bearer {self.settings.access_token}",
+                "Authorization": f"Bearer {self._authorization_token()}",
                 "X-API-VERSION": "1.0",
                 "User-Agent": "kiwiT/0.1 broker-reconciliation",
             },
