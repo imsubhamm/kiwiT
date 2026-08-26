@@ -4,6 +4,7 @@ import itertools
 from collections import defaultdict
 from datetime import datetime, time, timedelta
 from decimal import Decimal
+from math import isfinite
 
 from .intraday import IST, _quote_time
 
@@ -14,7 +15,10 @@ def number(value):
     value = Decimal(str(value))
     if not value.is_finite() or value <= 0:
         raise ValueError("Invalid chart price")
-    return float(value)
+    result = float(value)
+    if not isfinite(result) or result <= 0:
+        raise ValueError("Chart price outside numerical range")
+    return result
 
 
 def parse_minutes(payload, now):
@@ -70,7 +74,11 @@ def aggregate(bars, minutes):
 def history_context(payload, now):
     """Cache only prior completed regular sessions; list coverage rather than infer holidays."""
     day = now.astimezone(IST).date()
-    bars = [b for b in parse_minutes(payload, now) if datetime.fromisoformat(b["at"]).date() < day]
+    bars = [
+        b
+        for b in parse_minutes(payload, now)
+        if day - timedelta(days=14) <= datetime.fromisoformat(b["at"]).date() < day
+    ]
     groups = defaultdict(list)
     for bar in bars:
         groups[bar["at"][:10]].append(bar)

@@ -53,7 +53,7 @@ def test_invalid_and_conflicting_duplicates_fail_closed():
     assert len(parse_minutes(payload(data + data), NOW)) == 10
     with pytest.raises(ValueError, match="Conflicting"):
         parse_minutes(payload(data + [[data[0][0], 100, 102, 99, 101]]), NOW)
-    for values in ([float("nan"), 2, 1, 1], [2, 1, 3, 2], [0, 2, 1, 1]):
+    for values in ([float("nan"), 2, 1, 1], [2, 1, 3, 2], [0, 2, 1, 1], ["1e10000"] * 4, ["1e-10000"] * 4):
         with pytest.raises(ValueError):
             parse_minutes(payload([[data[0][0], *values]]), NOW)
 
@@ -97,6 +97,11 @@ def test_partial_history_not_silently_treated_as_full_session():
     ctx = history_context(payload(data), NOW)
     assert len(ctx["daily"]) == 1
     assert ctx["partial_sessions"] == ["2026-08-25"]
+
+
+def test_history_outside_requested_window_is_not_used_as_recent_context():
+    ctx = history_context(payload(rows("2026-07-01")), NOW)
+    assert ctx["daily"] == [] and ctx["five"] == [] and ctx["fifteen"] == []
 
 
 def test_latest_minute_invalidates_an_older_five_minute_breakout():
