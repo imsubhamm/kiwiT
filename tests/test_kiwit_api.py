@@ -64,6 +64,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/ready").json()["database"], "injected")
         self.assertEqual(self.client.get("/api/v1/paper/accounts/test").status_code, 401)
 
+    def test_banknifty_endpoints_require_auth_and_validate_limits(self):
+        headers = {'X-Kiwit-Api-Key': self.key}
+        body = {'amount': 100000, 'loss_pct': 5, 'profit_pct': 10}
+        self.assertEqual(self.client.post('/api/v1/banknifty/run', json=body).status_code, 401)
+        self.assertEqual(self.client.post('/api/v1/banknifty/stop').status_code, 401)
+        self.assertEqual(self.client.get('/api/v1/banknifty/status').status_code, 401)
+        self.assertFalse(self.client.get('/api/v1/banknifty/status', headers=headers).json()['available'])
+        self.assertEqual(self.client.post('/api/v1/banknifty/run', headers=headers, json=body).status_code, 503)
+        self.assertEqual(self.client.post('/api/v1/banknifty/run', headers=headers,
+                                         json=dict(body, loss_pct=-5)).status_code, 422)
+
     def test_session_run_is_authenticated_validated_and_paper_only(self):
         path = '/api/v1/intraday/session/run'
         body = {'amount':10000,'loss_pct':5,'profit_pct':10}

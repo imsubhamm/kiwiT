@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .auth import MemorySessionAuth, PostgresSessionAuth
+from .banknifty import BankNiftyService
 from .brokers import BrokerApiError, GrowwBrokerClient, GrowwSettings
 from .checkpointing import postgres_checkpointer
 from .database import DatabaseSettings, PostgresDatabase
@@ -98,6 +99,7 @@ def create_app(
             except ValueError:
                 app.state.broker = None
         app.state.intraday = IntradayService(database, app.state.broker) if database is not None else None
+        app.state.banknifty = BankNiftyService(database, app.state.broker) if database is not None else None
         app.state.metrics = Metrics()
         app.state.auth = auth_service or (
             PostgresSessionAuth(database) if database is not None
@@ -186,6 +188,33 @@ def create_app(
     def regime_router_evidence() -> dict[str, Any]:
         return regime_router_status()
 
+    @app.get('/api/v1/banknifty/status', dependencies=protected)
+    def banknifty_status(request: Request):
+        service = request.app.state.banknifty
+        if service is None:
+            return {'available': False, 'execution': 'paper-only', 'session': None}
+        return service.status()
+
+    @app.post('/api/v1/banknifty/run', dependencies=protected)
+    def banknifty_run(body: PaperSessionRequest, request: Request):
+        service = request.app.state.banknifty
+        if service is None:
+            raise HTTPException(503, 'Bank Nifty service unavailable')
+        user = request.app.state.auth.authenticate(request.cookies.get('kiwit_session', ''))
+        try:
+            return service.start(body.amount, body.loss_pct, body.profit_pct,
+                                 user.email if user else 'api-key-operator')
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
+    @app.post('/api/v1/banknifty/stop', dependencies=protected)
+    def banknifty_stop(request: Request):
+        service = request.app.state.banknifty
+        if service is None:
+            raise HTTPException(503, 'Bank Nifty service unavailable')
+        user = request.app.state.auth.authenticate(request.cookies.get('kiwit_session', ''))
+        return service.stop(user.email if user else 'api-key-operator')
+
     @app.get("/api/v1/intraday/status", dependencies=protected)
     def intraday_status(request: Request) -> dict[str, Any]:
         service = request.app.state.intraday
@@ -199,6 +228,8 @@ def create_app(
 
     @app.post('/api/v1/intraday/session/run', dependencies=protected)
     def start_paper_session(body: PaperSessionRequest, request: Request) -> dict[str, Any]:
+        if os.getenv('KIWIT_BANKNIFTY_AI_ENABLED', 'false').lower() == 'true':
+            raise HTTPException(409, 'Use the Bank Nifty AI desk; legacy cash Run is retired')
         service = request.app.state.intraday
         if service is None:
             raise HTTPException(503, 'Paper session service unavailable')

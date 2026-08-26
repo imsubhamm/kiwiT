@@ -1,0 +1,19 @@
+[Unit]
+Description=kiwiT Bank Nifty AI paper worker (no live orders)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kiwit
+Group=kiwit
+WorkingDirectory=/opt/kiwit/current
+EnvironmentFile=/etc/kiwit/kiwit.env
+ExecStart=/opt/kiwit/current/.venv/bin/python /opt/kiwit/current/scripts/run_banknifty_worker.py
+TimeoutStartSec=110
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/kiwit/shared
+UMask=0077

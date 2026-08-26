@@ -34,6 +34,13 @@ rollback() {
     install -m 0644 "$previous_release/deploy/kiwit-intraday.timer" /etc/systemd/system/kiwit-intraday.timer 2>/dev/null || true
     install -m 0644 "$previous_release/deploy/nginx-kiwit.conf" /etc/nginx/conf.d/kiwit.conf
     systemctl daemon-reload
+    systemctl stop kiwit-banknifty.timer kiwit-banknifty.service 2>/dev/null || true
+    if [[ -f "$previous_release/deploy/kiwit-banknifty.service" ]]; then
+      install -m 0644 "$previous_release/deploy/kiwit-banknifty.service" /etc/systemd/system/kiwit-banknifty.service
+      install -m 0644 "$previous_release/deploy/kiwit-banknifty.timer" /etc/systemd/system/kiwit-banknifty.timer
+      systemctl daemon-reload
+      systemctl start kiwit-banknifty.timer
+    fi
     systemctl restart kiwit-api
     systemctl reload nginx
   fi
@@ -67,6 +74,8 @@ install -m 0644 "$release_dir/deploy/kiwit-watchdog.service" /etc/systemd/system
 install -m 0644 "$release_dir/deploy/kiwit-watchdog.timer" /etc/systemd/system/kiwit-watchdog.timer
 install -m 0644 "$release_dir/deploy/kiwit-intraday.service" /etc/systemd/system/kiwit-intraday.service
 install -m 0644 "$release_dir/deploy/kiwit-intraday.timer" /etc/systemd/system/kiwit-intraday.timer
+install -m 0644 "$release_dir/deploy/kiwit-banknifty.service" /etc/systemd/system/kiwit-banknifty.service
+install -m 0644 "$release_dir/deploy/kiwit-banknifty.timer" /etc/systemd/system/kiwit-banknifty.timer
 chmod 0755 "$release_dir/scripts/health_watchdog.sh"
 chmod 0755 "$release_dir/scripts/run_intraday_worker.py"
 systemctl daemon-reload
@@ -88,6 +97,7 @@ for attempt in {1..10}; do
   fi
   sleep 2
 done
+systemctl enable --now kiwit-banknifty.timer
 trap - ERR
 find "$release_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf
 echo "deployed $release_id ($release_sha)"

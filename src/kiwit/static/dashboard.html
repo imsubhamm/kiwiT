@@ -11,7 +11,7 @@
   <div class="shell">
     <aside class="sidebar">
       <a class="brand" href="/dashboard" aria-label="kiwiT dashboard"><span class="brand-mark"><span>K</span></span><span><strong>kiwiT</strong><small>TRADING INTELLIGENCE</small></span></a>
-      <nav aria-label="Primary navigation"><a class="nav-item active" href="#overview"><span class="nav-icon">◈</span>Overview</a><a class="nav-item" href="#signals"><span class="nav-icon">⌁</span>Trade signals</a><a class="nav-item" href="#portfolio"><span class="nav-icon">⌁</span>Portfolio</a><a class="nav-item" href="#approval"><span class="nav-icon">✓</span>Strategy approval</a><a class="nav-item" href="#operations"><span class="nav-icon">◉</span>Operations</a><a class="nav-item" href="#research"><span class="nav-icon">✦</span>Research</a><a class="nav-item" href="#safety"><span class="nav-icon">◇</span>Risk controls</a></nav>
+      <nav aria-label="Primary navigation"><a class="nav-item active" href="#overview"><span class="nav-icon">◈</span>Overview</a><a class="nav-item" href="#banknifty"><span class="nav-icon">⌁</span>Bank Nifty AI</a><a class="nav-item" href="#portfolio"><span class="nav-icon">⌁</span>Portfolio</a><a class="nav-item" href="#approval"><span class="nav-icon">✓</span>Strategy approval</a><a class="nav-item" href="#operations"><span class="nav-icon">◉</span>Operations</a><a class="nav-item" href="#research"><span class="nav-icon">✦</span>Research</a><a class="nav-item" href="#safety"><span class="nav-icon">◇</span>Risk controls</a></nav>
       <div class="sidebar-foot"><div class="mode-card"><span class="pulse"></span><div><strong>Paper mode</strong><small>Live capital protected</small></div></div><p>KIWIT SYSTEMS · INDIA</p></div>
     </aside>
     <div class="workspace">
@@ -26,8 +26,21 @@
           <article class="metric-card blue"><div class="metric-top"><span>Open positions</span><i>◎</i></div><strong id="position-count">—</strong><small>ACTIVE LONGS</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 45 C28 44,38 33,62 35 S99 40,116 26 S141 19,160 29 S196 20,240 12"/></svg></article>
           <article class="metric-card mint"><div class="metric-top"><span>Execution state</span><i>◆</i></div><strong id="execution">—</strong><small>SAFETY GATE</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 43 C24 38,31 24,51 29 S83 42,104 34 S137 10,157 19 S192 31,240 8"/></svg></article>
         </section>
+        <section class="panel glass intraday reveal" id="banknifty">
+          <div class="signal-head"><div><span class="eyebrow">BANK NIFTY OPTIONS · AI PAPER DESK</span><h3>One Run. AI decisions. Controlled risk.</h3><p>Long calls or puts only. This isolated simulated ledger is separate from the legacy cash portfolio below.</p></div></div>
+          <form id="bn-form" class="run-controls">
+            <label>Paper capital ₹<input id="bn-amount" type="number" min="1" max="1000000" step="0.01" value="100000" required></label>
+            <label>Loss limit %<input id="bn-loss" type="number" min="0.01" max="25" step="0.01" value="5" required></label>
+            <label>Profit target %<input id="bn-profit" type="number" min="0.01" max="100" step="0.01" value="10" required></label>
+            <button id="bn-run" class="button primary" type="submit" disabled>Run Bank Nifty paper AI</button>
+            <button id="bn-stop" class="button danger" type="button" disabled>Stop &amp; exit</button>
+          </form>
+          <div class="run-summary" aria-live="polite"><strong id="bn-state">Checking AI desk…</strong><p id="bn-detail">Run is consent for today's simulated entries and exits, not live trading.</p><p id="bn-totals">No session loaded</p><p id="bn-budget">API spending controls not loaded</p></div>
+          <p class="control-note">09:30–15:30 IST · new entries stop 15:00 · flatten from 15:15. AI checks at most every 5 minutes; independent exits checked every minute. Whole lots; one position; max 25% premium allocation and 1% capital at planned stop per entry; max 10 entries/day. No expiry-day trades. Your percentages apply to both session P&amp;L and option premium stops/targets. Stops are triggers, not guaranteed loss caps. Fees and slippage are illustrative.</p>
+          <div id="bn-decisions" class="signal-audit"></div><div id="bn-events" class="signal-audit"></div>
+        </section>
         <section class="panel glass intraday reveal" id="signals">
-          <div class="signal-head"><div><span class="eyebrow">ONE RUN · EXPERIMENTAL PAPER ONLY</span><h3>Your trading session</h3><p>Set your simulated budget. Run approves automatic strategy selection, paper buys and paper sells for today. You can close this tab.</p></div><div class="feed-state"><span>MARKET FEED</span><strong id="feed-status">WAITING</strong><small id="feed-detail">No worker status loaded</small></div></div>
+          <div class="signal-head"><div><span class="eyebrow">LEGACY CASH PAPER DESK</span><h3>Cash observer history</h3><p>This older cash-market ledger is separate from the Bank Nifty AI desk above. Existing positions and audit history are preserved.</p></div><div class="feed-state"><span>MARKET FEED</span><strong id="feed-status">WAITING</strong><small id="feed-detail">No worker status loaded</small></div></div>
           <form id="run-form" class="run-controls">
             <label>Amount · simulated ₹<input id="run-amount" type="number" min="1" max="1000000" step="0.01" value="10000" required></label>
             <label>Session loss limit %<input id="run-loss" type="number" min="0.01" max="25" step="0.01" value="5" required></label>
@@ -80,4 +93,5 @@
   </div>
   <script src="/static/dashboard.js" defer></script>
   <script src="/static/dashboard-controls.js" defer></script>
+  <script src="/static/banknifty.js" defer></script>
 </body></html>

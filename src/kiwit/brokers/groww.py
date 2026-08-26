@@ -211,6 +211,15 @@ class GrowwBrokerClient:
         # Deliberately unreachable in this phase: no production code path sends mutation requests.
         raise BrokerExecutionDisabled("Groww order mutations are disabled; kiwiT remains paper-only")
 
+    def banknifty_candles(self, start: datetime, end: datetime) -> dict[str, Any]:
+        from zoneinfo import ZoneInfo
+        zone = ZoneInfo('Asia/Kolkata')
+        return self._request('GET', '/v1/historical/candles', query={
+            'exchange': 'NSE', 'segment': 'CASH', 'groww_symbol': 'NSE-BANKNIFTY',
+            'start_time': start.astimezone(zone).strftime('%Y-%m-%d %H:%M:%S'),
+            'end_time': end.astimezone(zone).strftime('%Y-%m-%d %H:%M:%S'), 'candle_interval': '1minute',
+        })
+
     def cancel_order(self, _groww_order_id: str) -> dict[str, Any]:
         raise BrokerExecutionDisabled("Groww order mutations are disabled; kiwiT remains paper-only")
 
