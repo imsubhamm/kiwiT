@@ -21,6 +21,7 @@ from .auth import MemorySessionAuth, PostgresSessionAuth
 from .brokers import BrokerApiError, GrowwBrokerClient, GrowwSettings
 from .checkpointing import postgres_checkpointer
 from .database import DatabaseSettings, PostgresDatabase
+from .intraday import IntradayService
 from .observability import Metrics, configure_logging
 from .paper_trading import PostgresPaperLedger
 from .rag import LocalKnowledgeIndex, PostgresKnowledgeIndex
@@ -45,6 +46,10 @@ class SearchRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=1, max_length=256)
+
+
+class SignalReviewRequest(BaseModel):
+    reason: str = Field(default="Reviewed in kiwiT dashboard", min_length=2, max_length=500)
 
 
 def _valid_api_key(supplied: str) -> bool:
@@ -85,6 +90,7 @@ def create_app(
                 app.state.broker = GrowwBrokerClient(GrowwSettings.from_env())
             except ValueError:
                 app.state.broker = None
+        app.state.intraday = IntradayService(database, app.state.broker) if database is not None else None
         app.state.metrics = Metrics()
         app.state.auth = auth_service or (
             PostgresSessionAuth(database) if database is not None
@@ -172,6 +178,44 @@ def create_app(
     @app.get("/api/v1/research/regime-router", dependencies=protected)
     def regime_router_evidence() -> dict[str, Any]:
         return regime_router_status()
+
+    @app.get("/api/v1/intraday/status", dependencies=protected)
+    def intraday_status(request: Request) -> dict[str, Any]:
+        service = request.app.state.intraday
+        if service is None:
+            return {"execution": "paper-only", "available": False, "freshness": None, "signals": [], "counts": {}}
+        result = service.list_signals()
+        result["available"] = True
+        result["freshness"] = service.freshness()
+        return result
+
+    @app.post("/api/v1/intraday/signals/{signal_id}/approve", dependencies=protected)
+    def approve_intraday_signal(signal_id: uuid.UUID, body: SignalReviewRequest, request: Request) -> dict[str, Any]:
+        service = request.app.state.intraday
+        if service is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "intraday service unavailable")
+        user = request.app.state.auth.authenticate(request.cookies.get("kiwit_session", ""))
+        reviewer = user.email if user else "api-key-operator"
+        try:
+            return service.review(signal_id, True, reviewer, body.reason)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "signal not found") from error
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+
+    @app.post("/api/v1/intraday/signals/{signal_id}/reject", dependencies=protected)
+    def reject_intraday_signal(signal_id: uuid.UUID, body: SignalReviewRequest, request: Request) -> dict[str, Any]:
+        service = request.app.state.intraday
+        if service is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "intraday service unavailable")
+        user = request.app.state.auth.authenticate(request.cookies.get("kiwit_session", ""))
+        reviewer = user.email if user else "api-key-operator"
+        try:
+            return service.review(signal_id, False, reviewer, body.reason)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "signal not found") from error
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
 
     @app.get("/login", include_in_schema=False)
     def login_page(request: Request) -> Any:

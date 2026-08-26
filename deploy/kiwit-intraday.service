@@ -1,0 +1,30 @@
+[Unit]
+Description=kiwiT intraday paper signal worker
+After=network-online.target kiwit-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kiwit
+Group=kiwit
+WorkingDirectory=/opt/kiwit/current
+EnvironmentFile=/etc/kiwit/kiwit.env
+ExecStart=/opt/kiwit/current/.venv/bin/python /opt/kiwit/current/scripts/run_intraday_worker.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/opt/kiwit/shared
+UMask=0077

@@ -30,6 +30,8 @@ rollback() {
     echo "readiness failed; rolling back to $previous_release" >&2
     ln -sfn "$previous_release" /opt/kiwit/current
     install -m 0644 "$previous_release/deploy/kiwit-api.service" /etc/systemd/system/kiwit-api.service
+    install -m 0644 "$previous_release/deploy/kiwit-intraday.service" /etc/systemd/system/kiwit-intraday.service 2>/dev/null || true
+    install -m 0644 "$previous_release/deploy/kiwit-intraday.timer" /etc/systemd/system/kiwit-intraday.timer 2>/dev/null || true
     install -m 0644 "$previous_release/deploy/nginx-kiwit.conf" /etc/nginx/conf.d/kiwit.conf
     systemctl daemon-reload
     systemctl restart kiwit-api
@@ -63,9 +65,13 @@ install -m 0644 "$release_dir/deploy/kiwit-api.service" /etc/systemd/system/kiwi
 install -m 0644 "$release_dir/deploy/nginx-kiwit.conf" /etc/nginx/conf.d/kiwit.conf
 install -m 0644 "$release_dir/deploy/kiwit-watchdog.service" /etc/systemd/system/kiwit-watchdog.service
 install -m 0644 "$release_dir/deploy/kiwit-watchdog.timer" /etc/systemd/system/kiwit-watchdog.timer
+install -m 0644 "$release_dir/deploy/kiwit-intraday.service" /etc/systemd/system/kiwit-intraday.service
+install -m 0644 "$release_dir/deploy/kiwit-intraday.timer" /etc/systemd/system/kiwit-intraday.timer
 chmod 0755 "$release_dir/scripts/health_watchdog.sh"
+chmod 0755 "$release_dir/scripts/run_intraday_worker.py"
 systemctl daemon-reload
 systemctl enable --now kiwit-watchdog.timer
+systemctl enable --now kiwit-intraday.timer
 systemctl daemon-reload
 nginx -t
 ln -sfn "$release_dir" /opt/kiwit/current

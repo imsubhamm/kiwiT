@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#070b16">
-  <title>kiwiT · Trading intelligence</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/dashboard.css"><link rel="stylesheet" href="/static/router.css"><link rel="stylesheet" href="/static/sync-feedback.css">
+  <title>kiwiT · Trading intelligence</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/dashboard.css"><link rel="stylesheet" href="/static/router.css"><link rel="stylesheet" href="/static/sync-feedback.css"><link rel="stylesheet" href="/static/intraday.css">
 </head>
 <body>
   <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
   <div class="shell">
     <aside class="sidebar">
       <a class="brand" href="/dashboard" aria-label="kiwiT dashboard"><span class="brand-mark"><span>K</span></span><span><strong>kiwiT</strong><small>TRADING INTELLIGENCE</small></span></a>
-      <nav aria-label="Primary navigation"><a class="nav-item active" href="#overview"><span class="nav-icon">◈</span>Overview</a><a class="nav-item" href="#portfolio"><span class="nav-icon">⌁</span>Portfolio</a><a class="nav-item" href="#approval"><span class="nav-icon">✓</span>Strategy approval</a><a class="nav-item" href="#operations"><span class="nav-icon">◉</span>Operations</a><a class="nav-item" href="#research"><span class="nav-icon">✦</span>Research</a><a class="nav-item" href="#safety"><span class="nav-icon">◇</span>Risk controls</a></nav>
+      <nav aria-label="Primary navigation"><a class="nav-item active" href="#overview"><span class="nav-icon">◈</span>Overview</a><a class="nav-item" href="#signals"><span class="nav-icon">⌁</span>Trade signals</a><a class="nav-item" href="#portfolio"><span class="nav-icon">⌁</span>Portfolio</a><a class="nav-item" href="#approval"><span class="nav-icon">✓</span>Strategy approval</a><a class="nav-item" href="#operations"><span class="nav-icon">◉</span>Operations</a><a class="nav-item" href="#research"><span class="nav-icon">✦</span>Research</a><a class="nav-item" href="#safety"><span class="nav-icon">◇</span>Risk controls</a></nav>
       <div class="sidebar-foot"><div class="mode-card"><span class="pulse"></span><div><strong>Paper mode</strong><small>Live capital protected</small></div></div><p>KIWIT SYSTEMS · INDIA</p></div>
     </aside>
     <div class="workspace">
@@ -22,6 +22,13 @@
           <article class="metric-card gold"><div class="metric-top"><span>Realized P&amp;L</span><i>↗</i></div><strong id="pnl">—</strong><small>LEDGER TOTAL</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 40 C20 34,34 42,51 33 S76 19,96 26 S128 46,148 30 S180 16,201 18 S219 11,240 5"/></svg></article>
           <article class="metric-card blue"><div class="metric-top"><span>Open positions</span><i>◎</i></div><strong id="position-count">—</strong><small>ACTIVE LONGS</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 45 C28 44,38 33,62 35 S99 40,116 26 S141 19,160 29 S196 20,240 12"/></svg></article>
           <article class="metric-card mint"><div class="metric-top"><span>Execution state</span><i>◆</i></div><strong id="execution">—</strong><small>SAFETY GATE</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 43 C24 38,31 24,51 29 S83 42,104 34 S137 10,157 19 S192 31,240 8"/></svg></article>
+        </section>
+        <section class="panel glass intraday reveal" id="signals">
+          <div class="signal-head"><div><span class="eyebrow">HUMAN-APPROVED · PAPER ONLY</span><h3>Intraday signal desk</h3><p>kiwiT observes NIFTYBEES from 09:30–15:30 IST. A fresh setup waits for your decision; exits are monitored automatically.</p></div><div class="feed-state"><span>MARKET FEED</span><strong id="feed-status">WAITING</strong><small id="feed-detail">No worker status loaded</small></div></div>
+          <div class="signal-metrics"><div><span>LAST PRICE</span><strong id="feed-price">—</strong></div><div><span>QUOTE AGE</span><strong id="feed-age">—</strong></div><div><span>PENDING</span><strong id="pending-count">0</strong></div><div><span>ACTIVE PAPER TRADES</span><strong id="entered-count">0</strong></div></div>
+          <div class="signal-warning"><i>◆</i><p><strong>Approval creates a simulated fill only.</strong><span>5% stop · 10% target · deterministic sizing · stale approvals blocked · Groww mutations disabled</span></p></div>
+          <div id="pending-signals" class="signal-list"><p class="empty">No signal data loaded. Sync the workspace.</p></div>
+          <div class="signal-audit"><div><span class="eyebrow">IMMUTABLE ACTIVITY</span><h4>Approval and exit audit</h4></div><div id="signal-audit"><p class="empty">No audit events loaded.</p></div></div>
         </section>
         <section class="content-grid reveal delay-3">
           <article class="panel glass portfolio" id="portfolio"><div class="panel-head"><div><span class="eyebrow">PORTFOLIO</span><h3>Open positions</h3></div><span class="live-label"><i></i>LIVE VIEW</span></div><div class="table-wrap"><table><thead><tr><th>Instrument</th><th>Quantity</th><th>Average</th><th>Realized P&amp;L</th></tr></thead><tbody id="positions"><tr><td colspan="4" class="empty"><span class="empty-icon">⌁</span>Connect your workspace to load positions</td></tr></tbody></table></div></article>

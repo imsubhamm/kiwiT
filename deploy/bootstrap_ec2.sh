@@ -20,10 +20,12 @@ id -u kiwit >/dev/null 2>&1 || useradd --system --home /opt/kiwit --shell /sbin/
 install -d -o kiwit -g kiwit -m 0750 /opt/kiwit/shared /opt/kiwit/releases
 install -d -o root -g kiwit -m 0750 /etc/kiwit
 install -m 0644 deploy/kiwit-api.service /etc/systemd/system/kiwit-api.service
+install -m 0644 deploy/kiwit-intraday.service /etc/systemd/system/kiwit-intraday.service
+install -m 0644 deploy/kiwit-intraday.timer /etc/systemd/system/kiwit-intraday.timer
 install -m 0644 deploy/nginx-kiwit.conf /etc/nginx/conf.d/kiwit.conf
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 systemctl daemon-reload
-systemctl enable kiwit-api nginx
+systemctl enable kiwit-api nginx kiwit-intraday.timer
 nginx -t
 
 echo "Bootstrap complete. Create /etc/kiwit/kiwit.env with mode 0640, then deploy."
