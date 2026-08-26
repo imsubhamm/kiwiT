@@ -8,7 +8,7 @@ from math import isfinite
 
 from .intraday import IST, _quote_time
 
-VERSION = "banknifty-chart-v1"
+VERSION = "banknifty-chart-v2-week"
 
 
 def number(value):
@@ -90,6 +90,7 @@ def history_context(payload, now):
             continue
         daily.extend(full)
         complete.extend(group)
+    calendar_week = previous_calendar_week(daily, partial, now)
     daily = daily[-5:]
     first = daily[0]["at"][:10] if daily else str(day)
     complete = [b for b in complete if b["at"][:10] >= first]
@@ -100,8 +101,72 @@ def history_context(payload, now):
         "five": aggregate(complete, 5)[-100:],
         "fifteen": aggregate(complete, 15)[-100:],
         "partial_sessions": [d for d in partial if d >= first],
+        "previous_calendar_week": calendar_week,
         "source": "Groww NSE-BANKNIFTY completed regular-session candles",
     }
+
+
+def previous_calendar_week(daily, partial, now):
+    """Previous Monday-Friday in IST, never a rolling five-session substitute."""
+    today = now.astimezone(IST).date()
+    monday = today - timedelta(days=today.weekday() + 7)
+    friday = monday + timedelta(days=4)
+    dates = [str(monday + timedelta(days=i)) for i in range(5)]
+    selected = sorted((b for b in daily if b["at"][:10] in dates), key=lambda b: b["at"])
+    present = {b["at"][:10] for b in selected}
+    partial_dates = sorted(set(partial).intersection(dates))
+    absent = [d for d in dates if d not in present and d not in partial_dates]
+    complete = len(present) == 5 and not partial_dates
+    result = {
+        "period_start": str(monday),
+        "period_end": str(friday),
+        "timezone": "Asia/Kolkata",
+        "basis": "Previous calendar week, Monday-Friday; not rolling sessions",
+        "coverage": {
+            "status": "complete" if complete else "incomplete",
+            "complete_sessions": sorted(present),
+            "partial_sessions": partial_dates,
+            "absent_weekdays_unverified": absent,
+            "calendar_verified": False,
+        },
+        "daily_bars": selected,
+        "trend": "insufficient_data",
+        "ohlc": None,
+        "return_pct": None,
+        "range_pct": None,
+        "structure": None,
+        "summary": "Previous-week coverage incomplete; no full-week trend inferred",
+    }
+    if not complete:
+        return result
+    op, close = selected[0]["open"], selected[-1]["close"]
+    high, low = max(b["high"] for b in selected), min(b["low"] for b in selected)
+    pairs = list(itertools.pairwise(selected))
+    structure = {
+        name: sum(predicate(a, b) for a, b in pairs)
+        for name, predicate in (
+            ("higher_closes", lambda a, b: b["close"] > a["close"]),
+            ("lower_closes", lambda a, b: b["close"] < a["close"]),
+            ("higher_highs", lambda a, b: b["high"] > a["high"]),
+            ("higher_lows", lambda a, b: b["low"] > a["low"]),
+            ("lower_highs", lambda a, b: b["high"] < a["high"]),
+            ("lower_lows", lambda a, b: b["low"] < a["low"]),
+        )
+    }
+    trend = "mixed_or_range"
+    if close - op > 0.2 * (high - low) and structure["higher_closes"] >= 3:
+        trend = "upward_bias"
+    elif op - close > 0.2 * (high - low) and structure["lower_closes"] >= 3:
+        trend = "downward_bias"
+    result.update(
+        trend=trend,
+        ohlc={"open": op, "high": high, "low": low, "close": close},
+        return_pct=rounded((close / op - 1) * 100),
+        range_pct=rounded((high - low) / op * 100),
+        structure=structure,
+        summary=f"{monday} to {friday}: {trend}; five complete regular sessions. Heuristic context, not a trade signal.",
+    )
+    return result
 
 
 def ema(values, period):
@@ -298,6 +363,9 @@ def analyse(current, context, now):
         issues.append("Fewer than five complete prior regular sessions")
     if context["partial_sessions"]:
         issues.append("Incomplete prior sessions: " + ", ".join(context["partial_sessions"]))
+    calendar_week = context.get("previous_calendar_week")
+    if not calendar_week or calendar_week["coverage"]["status"] != "complete":
+        issues.append("Previous calendar week incomplete; absent weekdays require data or holiday verification")
     five_today, fifteen_today = aggregate(current, 5), aggregate(current, 15)
     five = (context["five"] + five_today)[-100:]
     fifteen = (context["fifteen"] + fifteen_today)[-100:]
@@ -335,6 +403,8 @@ def analyse(current, context, now):
         "timeframes": frames,
         "previous_sessions": daily,
         "week": weekly,
+        "previous_calendar_week": calendar_week,
+        "weekly_alignment": weekly_alignment(calendar_week, frames["15m"]["regime"], spot),
         "previous_day": previous,
         "opening_range": opening,
         "patterns": patterns,
@@ -348,6 +418,25 @@ def analyse(current, context, now):
             "Absent sessions are not independently verified against an exchange calendar",
         ],
         "chart_bars": {"1m": current[-60:], "5m": five[-40:], "15m": fifteen[-30:]},
+    }
+
+
+def weekly_alignment(week, intraday_regime, spot):
+    if not week or week["coverage"]["status"] != "complete":
+        return {"alignment": "unknown", "price_location": "unknown"}
+    trend = week["trend"]
+    aligned = (trend, intraday_regime) in {("upward_bias", "uptrend"), ("downward_bias", "downtrend")}
+    conflicting = (trend, intraday_regime) in {("upward_bias", "downtrend"), ("downward_bias", "uptrend")}
+    high, low = week["ohlc"]["high"], week["ohlc"]["low"]
+    return {
+        "alignment": "aligned" if aligned else "conflicting" if conflicting else "mixed",
+        "price_location": "above_previous_week_high"
+        if spot > high
+        else "below_previous_week_low"
+        if spot < low
+        else "inside_previous_week_range",
+        "distance_to_high_pct": rounded((spot / high - 1) * 100),
+        "distance_to_low_pct": rounded((spot / low - 1) * 100),
     }
 
 

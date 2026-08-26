@@ -1,4 +1,4 @@
-# Bank Nifty chart evidence v1
+# Bank Nifty chart evidence v2: previous-week context
 
 This extends the experimental options paper desk, not the rejected cash router.
 No model migration, live order permission, fine-tuning, daily-report service or
@@ -10,6 +10,9 @@ profitability approval is included.
 - Fetch today's session from 09:15, plus a 14-calendar-day historical window.
 - Historical context uses the last **five complete observed regular sessions**;
   it is not labelled a calendar week. Actual session dates are displayed.
+- Separately calculate the **previous calendar week's Monday–Friday in IST**
+  from the historical window before trimming rolling-session history. Current-week
+  candles cannot influence this summary. The AI receives both contexts.
 - Filter regular-session starts 09:15–15:29 IST; timestamps mean candle opens.
   Only candles whose close time is at or before analysis time are accepted.
 - Validate finite positive OHLC, minute alignment, order, and duplicate conflicts.
@@ -18,6 +21,11 @@ profitability approval is included.
   the selected context are flagged and block entries; fewer than five complete
   sessions also blocks entries. An absent day is not automatically a verified
   holiday: an exchange calendar is still a separate requirement.
+- Previous-week coverage requires five complete weekday sessions. Missing and
+  partial dates are listed separately; incomplete coverage blocks new entries and
+  does not produce a full-week trend or OHLC. **Holiday-shortened weeks currently
+  block too**, until exchange-calendar verification is implemented. This is a
+  conservative data-quality limitation, not a claim every weekday is a trading day.
 - 5m/15m candles are aggregated at 09:15-aligned boundaries. Partial or gapped
   buckets are excluded. Current-day gaps block entries. First 15m context is
   available after 09:30. Latest minute close must be within 120 seconds.
@@ -39,6 +47,14 @@ including prior sessions. No synthetic overnight candles are inserted.
   EMA21 is `uptrend`/`downtrend`. Insufficient data is explicitly labelled.
 - Context: five-session OHLC and return (first open to last close), previous-day
   high/low/close, opening gap and completed first 15-minute opening range.
+- Previous calendar week: OHLC, open-to-close return, range as a percentage of
+  first open, and counts of higher/lower closes, highs and lows across four daily
+  comparisons. Upward bias requires net gain greater than 20% of the week's range
+  and at least three higher closes; downward bias is symmetrical. Otherwise the
+  label is mixed/range. This fixed heuristic is context, not a validated signal.
+- Weekly alignment: compare that bias with today's 15m regime; label aligned,
+  conflicting or mixed. Report spot above/below/inside the week's range and signed
+  percentage distances to its high/low. Incomplete weeks produce unknown alignment.
 
 ## Explicit 5m setup definitions
 
@@ -78,6 +94,9 @@ Session `chart_analysis` stores current full evidence and bounded chart bars.
 paper-entry audit events store matching setup evidence. The API excludes the larger
 historical cache from status responses. The UI shows 1m/5m/15m candles, prior-day and
 opening-range lines, indicators, detected setups, timestamps and stale/error labels.
+It also shows the previous week's dates, coverage, OHLC, daily structure and 15m
+alignment. Weekly evidence is included in the existing persisted AI snapshot;
+this enriches inference context, **not model training or automatic learning**.
 All external/model text is rendered as text, never interpreted as HTML.
 
 ## Validation and remaining limits
@@ -85,6 +104,12 @@ All external/model text is rendered as text, never interpreted as HTML.
 Read-only replay on 2026-08-26 at 15:00 IST successfully produced context from
 Aug 19, 20, 21, 24 and 25 and valid current-session indicators. No active setup
 was detected at that timestamp. No AI call or paper trade was made in this check.
+
+The v2 read-only replay at the same timestamp independently recovered the previous
+calendar week, Aug 17–21, with five complete sessions: open 57,453.95, high
+57,772.25, low 57,001.75, close 57,761.95, open-to-close return +0.5361%.
+Two higher and two lower daily closes produced `mixed_or_range`; current spot
+was above that week's high. This validates the data path, not trading performance.
 
 Tests cover future exclusion, duplicate conflicts, malformed OHLC, bucket boundaries,
 missing history, session gaps, indicator warmup, setup direction, stale evidence,

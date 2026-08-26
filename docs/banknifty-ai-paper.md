@@ -9,6 +9,7 @@ are recorded, not hidden chain-of-thought. BUY is long premium only; EXIT cannot
 open a short. The deterministic boundary can reject any model decision.
 
 The chart-evidence extension now adds five prior complete observed sessions,
+plus the distinct previous calendar week's Monday–Friday trend and coverage,
 completed 1m/5m/15m analysis, explicit setups and dashboard candles. New entries
 require fresh matching chart evidence. See [CHART_ANALYSIS.md](CHART_ANALYSIS.md)
 for precise rules, coverage, caching and remaining limitations. Raw chart bars

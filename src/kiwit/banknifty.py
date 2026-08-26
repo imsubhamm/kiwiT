@@ -184,7 +184,7 @@ class BankNiftyService:
                 "last_exit": None,
                 "execution": "paper-only",
                 "model": MODEL,
-                "version": "banknifty-ai-v2-chart",
+                "version": "banknifty-ai-v3-week",
                 "last_tick": None,
             }
             self.store.save(connection, state)
@@ -453,7 +453,12 @@ class BankNiftyService:
                 current["history"] = history[-20:]
                 cache = snapshot.pop("chart_cache", None)
                 analysis = snapshot.get("chart_analysis")
-                if cache and len(cache.get("daily", [])) >= 5 and not cache.get("partial_sessions"):
+                if (
+                    cache
+                    and len(cache.get("daily", [])) >= 5
+                    and not cache.get("partial_sessions")
+                    and cache.get("previous_calendar_week", {}).get("coverage", {}).get("status") == "complete"
+                ):
                     current["chart_cache"] = cache
                 if analysis:
                     current["chart_analysis"] = analysis

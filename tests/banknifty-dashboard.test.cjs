@@ -55,3 +55,26 @@ test('chart and evidence render safely, support timeframes and label stale data'
   nodes['bn-timeframe'].value='1m';nodes['bn-timeframe'].listeners.change();
   assert.match(nodes['bn-chart'].children[0].attributes['aria-label'],/1m/);
 });
+test('previous calendar week and missing coverage are visible separately',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  const week={period_start:'2026-08-17',period_end:'2026-08-21',trend:'upward_bias',
+    coverage:{status:'complete',partial_sessions:[],absent_weekdays_unverified:[]},
+    ohlc:{open:100,high:110,low:99,close:108},return_pct:8,range_pct:11,
+    structure:{higher_closes:4,lower_closes:0,higher_highs:4,higher_lows:4,lower_highs:0,lower_lows:0}};
+  data.session={state:'running',chart_analysis:{at:new Date().toISOString(),ready:true,summary:'Weekly context',
+    timeframes:{},patterns:[],previous_calendar_week:week,
+    weekly_alignment:{alignment:'aligned',price_location:'inside_previous_week_range'}}};
+  timers[0]();await settle();
+  let text=nodes['bn-context'].children.map(n=>n.textContent).join('\n');
+  assert.match(text,/PREVIOUS CALENDAR WEEK · 2026-08-17 to 2026-08-21/);
+  assert.match(text,/Open-to-close return 8%/);
+  assert.match(text,/15m vs previous week: aligned/);
+  week.coverage.status='incomplete';week.coverage.absent_weekdays_unverified=['2026-08-17'];
+  week.coverage.partial_sessions=['2026-08-18'];week.ohlc=null;week.structure=null;
+  week.trend='insufficient_data';data.session.chart_analysis.ready=false;
+  timers[0]();await settle();
+  text=nodes['bn-context'].children.map(n=>n.textContent).join('\n');
+  assert.match(text,/Not assumed to be holidays/);
+  assert.match(text,/Partial weekly sessions: 2026-08-18/);
+  assert.match(nodes['bn-chart-summary'].textContent,/new entries blocked/);
+});

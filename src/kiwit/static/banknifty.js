@@ -62,6 +62,15 @@
     el('bn-chart-summary').textContent=`${quality} · ${analysis.at} · ${analysis.summary}`;
     const context = Object.entries(analysis.timeframes).map(([frame,m])=>`${frame}: ${m.regime} · EMA9 ${m.ema9 ?? 'warming up'} · EMA21 ${m.ema21 ?? 'warming up'} · ATR14 ${m.atr14 ?? 'warming up'} · RSI14 ${m.rsi14 ?? 'warming up'}`);
     if(analysis.week) context.push(`Prior sessions: ${analysis.week.sessions.join(', ')} · Return ${analysis.week.return_pct}% · High ${analysis.week.high} · Low ${analysis.week.low}`);
+    const week=analysis.previous_calendar_week;
+    if(week) {
+      context.push(`PREVIOUS CALENDAR WEEK · ${week.period_start} to ${week.period_end} IST · ${week.coverage.status} · ${week.trend}`);
+      if(week.ohlc) context.push(`Week open ${week.ohlc.open} · high ${week.ohlc.high} · low ${week.ohlc.low} · close ${week.ohlc.close} · Open-to-close return ${week.return_pct}% · Range ${week.range_pct}%`);
+      if(week.structure) context.push(`Daily structure (4 comparisons): higher closes ${week.structure.higher_closes} · lower closes ${week.structure.lower_closes} · higher highs/lows ${week.structure.higher_highs}/${week.structure.higher_lows} · lower highs/lows ${week.structure.lower_highs}/${week.structure.lower_lows}`);
+      if(week.coverage.absent_weekdays_unverified.length) context.push(`Unverified absent weekdays: ${week.coverage.absent_weekdays_unverified.join(', ')}. Not assumed to be holidays.`);
+      if(week.coverage.partial_sessions.length) context.push(`Partial weekly sessions: ${week.coverage.partial_sessions.join(', ')}`);
+      if(analysis.weekly_alignment) context.push(`15m vs previous week: ${analysis.weekly_alignment.alignment} · Current price: ${analysis.weekly_alignment.price_location}`);
+    }
     if(analysis.previous_day) context.push(`Previous day: high ${analysis.previous_day.high} · low ${analysis.previous_day.low} · close ${analysis.previous_day.close} · Opening gap ${analysis.gap_pct}%`);
     lines('bn-context', context.concat(analysis.issues || []));
     lines('bn-patterns', analysis.patterns.length ? analysis.patterns.map(p=>`${p.name} · ${p.direction} · ${p.timeframe} · ${p.strategy} · Level ${p.level} · Invalidation ${p.invalidation} · Detected ${p.at}`) : ['No active confirmed setup. Waiting is a valid decision.']);

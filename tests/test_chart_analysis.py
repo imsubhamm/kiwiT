@@ -11,6 +11,8 @@ from kiwit.chart_analysis import (
     history_context,
     indicators,
     parse_minutes,
+    previous_calendar_week,
+    weekly_alignment,
 )
 from kiwit.intraday import IST
 from kiwit.options_ai import request_body
@@ -25,6 +27,7 @@ def rows(day, count=375, base=55000):
 
 
 NOW = datetime(2026, 8, 26, 10, 0, tzinfo=IST)
+HISTORY_DATES = ["2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21", "2026-08-24", "2026-08-25"]
 
 
 def payload(data):
@@ -32,9 +35,7 @@ def payload(data):
 
 
 def context():
-    return history_context(
-        payload(sum([rows(d) for d in ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-24", "2026-08-25"]], [])), NOW
-    )
+    return history_context(payload([row for d in HISTORY_DATES for row in rows(d)]), NOW)
 
 
 def test_regular_session_filtering_and_future_exclusion():
@@ -46,6 +47,74 @@ def test_regular_session_filtering_and_future_exclusion():
     assert result[-1]["at"] == NOW.isoformat()
     changed = [r if datetime.fromisoformat(r[0]) < NOW else [r[0], 999, 999, 999, 999] for r in data]
     assert parse_minutes(payload(changed), NOW) == result
+
+
+def test_calendar_week_is_distinct_from_rolling_sessions_and_excludes_current_week():
+    data = [row for i, d in enumerate(HISTORY_DATES[:5]) for row in rows(d, base=55000 + i * 100)]
+    data += rows("2026-08-24", base=90000) + rows("2026-08-25", base=91000)
+    ctx = history_context(payload(data), NOW)
+    week = ctx["previous_calendar_week"]
+    assert [b["at"][:10] for b in ctx["daily"]] == HISTORY_DATES[-5:]
+    assert week["coverage"]["complete_sessions"] == HISTORY_DATES[:5]
+    assert week["ohlc"] == {"open": 55000, "high": 55776, "low": 54999, "close": 55775}
+    assert week["return_pct"] == round((55775 / 55000 - 1) * 100, 4)
+    assert week["trend"] == "upward_bias"
+    result = analyse(parse_minutes(payload(rows("2026-08-26", 45)), NOW), ctx, NOW)
+    assert result["previous_calendar_week"] == week
+    assert result["weekly_alignment"]["alignment"] in {"aligned", "conflicting", "mixed"}
+
+
+@pytest.mark.parametrize(
+    "at,start,end",
+    [
+        ("2026-08-24T09:00:00+05:30", "2026-08-17", "2026-08-21"),
+        ("2026-08-30T23:00:00+05:30", "2026-08-17", "2026-08-21"),
+        ("2026-08-23T20:00:00+00:00", "2026-08-17", "2026-08-21"),
+        ("2026-01-01T09:00:00+05:30", "2025-12-22", "2025-12-26"),
+    ],
+)
+def test_previous_calendar_week_boundaries_use_ist(at, start, end):
+    week = previous_calendar_week([], [], datetime.fromisoformat(at))
+    assert (week["period_start"], week["period_end"]) == (start, end)
+
+
+@pytest.mark.parametrize("step,trend", [(2, "upward_bias"), (-2, "downward_bias"), (0, "mixed_or_range")])
+def test_weekly_trend_and_price_alignment(step, trend):
+    daily = [
+        {
+            "at": d + "T15:30:00+05:30",
+            "open": 100 + i * step,
+            "high": 101 + i * step,
+            "low": 99 + i * step,
+            "close": 100 + i * step,
+        }
+        for i, d in enumerate(HISTORY_DATES[:5])
+    ]
+    week = previous_calendar_week(daily, [], NOW)
+    assert week["trend"] == trend
+    assert week["structure"]["higher_closes"] == (4 if step > 0 else 0)
+    assert week["structure"]["lower_closes"] == (4 if step < 0 else 0)
+    above = weekly_alignment(week, "uptrend", 200)
+    assert above["alignment"] == ("aligned" if step > 0 else "conflicting" if step < 0 else "mixed")
+    assert above["price_location"] == "above_previous_week_high"
+    assert weekly_alignment(week, "downtrend", 50)["price_location"] == "below_previous_week_low"
+    assert weekly_alignment(week, "range", 100)["price_location"] == "inside_previous_week_range"
+
+
+def test_missing_or_partial_week_blocks_entries_without_inventing_holidays():
+    data = [row for d in HISTORY_DATES[2:] for row in rows(d)] + rows("2026-08-18", count=374)
+    ctx = history_context(payload(data), NOW)
+    assert len(ctx["daily"]) == 5  # Rolling coverage alone is no longer sufficient.
+    week = ctx["previous_calendar_week"]
+    assert week["coverage"]["status"] == "incomplete"
+    assert week["coverage"]["absent_weekdays_unverified"] == ["2026-08-17"]
+    assert week["coverage"]["partial_sessions"] == ["2026-08-18"]
+    assert week["coverage"]["calendar_verified"] is False
+    assert week["ohlc"] is None and week["trend"] == "insufficient_data"
+    result = analyse(parse_minutes(payload(rows("2026-08-26", 45)), NOW), ctx, NOW)
+    assert not result["ready"]
+    assert any("calendar week incomplete" in issue for issue in result["issues"])
+    assert result["weekly_alignment"] == {"alignment": "unknown", "price_location": "unknown"}
 
 
 def test_invalid_and_conflicting_duplicates_fail_closed():
@@ -173,6 +242,7 @@ def test_explicit_setup_rules(name, direction, last, prev, regime):
 
 def test_market_fetches_full_context_and_reuses_daily_cache(monkeypatch):
     import io
+
     from kiwit.options_market import BankNiftyMarket
 
     class Broker:
@@ -184,19 +254,19 @@ def test_market_fetches_full_context_and_reuses_daily_cache(monkeypatch):
             data = (
                 rows("2026-08-26", 45)
                 if start.date() == NOW.date()
-                else sum([rows(d) for d in ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-24", "2026-08-25"]], [])
+                else [row for d in HISTORY_DATES for row in rows(d)]
             )
             return payload(data)
 
         def quote(self, symbol, segment):
             # The trade happened during network I/O, after the original scan timestamp.
-            return dict(
-                bid_price=100,
-                offer_price=101,
-                bid_quantity=60,
-                offer_quantity=60,
-                last_trade_time=int((NOW + timedelta(seconds=1)).timestamp() * 1000),
-            )
+            return {
+                "bid_price": 100,
+                "offer_price": 101,
+                "bid_quantity": 60,
+                "offer_quantity": 60,
+                "last_trade_time": int((NOW + timedelta(seconds=1)).timestamp() * 1000),
+            }
 
     csv = "exchange,segment,underlying_symbol,instrument_type,expiry_date,buy_allowed,sell_allowed,is_reserved,lot_size,freeze_quantity,trading_symbol,strike_price,tick_size\nNSE,FNO,BANKNIFTY,CE,2026-09-29,1,1,0,30,601,BANKNIFTY26SEP55000CE,55000,.05\n"
     monkeypatch.setattr("kiwit.options_market.urllib.request.urlopen", lambda *a, **k: io.BytesIO(csv.encode()))
@@ -207,6 +277,9 @@ def test_market_fetches_full_context_and_reuses_daily_cache(monkeypatch):
     assert len(broker.requests) == 2
     second = market.snapshot(NOW, cached_context=first["chart_cache"])
     assert len(broker.requests) == 3 and second["chart_analysis"] == first["chart_analysis"]
+    refreshed = market.snapshot(NOW, cached_context=dict(first["chart_cache"], version="banknifty-chart-v1"))
+    assert len(broker.requests) == 5
+    assert refreshed["chart_analysis"]["previous_calendar_week"]["coverage"]["status"] == "complete"
     ai_snapshot = {k: v for k, v in first.items() if k not in ("chart_cache", "underlying_history")}
     ai_snapshot["chart_analysis"] = {k: v for k, v in first["chart_analysis"].items() if k != "chart_bars"}
     ai_snapshot["history"] = first["underlying_history"]
