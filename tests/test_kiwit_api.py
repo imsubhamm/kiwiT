@@ -64,6 +64,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/ready").json()["database"], "injected")
         self.assertEqual(self.client.get("/api/v1/paper/accounts/test").status_code, 401)
 
+    def test_session_run_is_authenticated_validated_and_paper_only(self):
+        path = '/api/v1/intraday/session/run'
+        body = {'amount':10000,'loss_pct':5,'profit_pct':10}
+        self.assertEqual(self.client.post(path,json=body).status_code,401)
+        headers = {'X-KIWIT-API-Key': self.key}
+        self.assertEqual(self.client.post(path,json={**body,'loss_pct':0},headers=headers).status_code,422)
+        self.assertEqual(self.client.post(path,json=body,headers=headers).status_code,503)
+        calls = []
+        self.client.app.state.intraday = SimpleNamespace(start_session=lambda *args: calls.append(args) or {'state':'armed','execution':'paper-only'})
+        response = self.client.post(path,json=body,headers=headers)
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json()['execution'],'paper-only')
+        self.assertEqual(calls[0][3],'api-key-operator')
+
     def test_metrics_are_authenticated_and_record_requests(self):
         self.client.get("/health")
         self.assertEqual(self.client.get("/metrics").status_code, 401)

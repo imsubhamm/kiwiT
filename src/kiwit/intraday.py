@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from .brokers.groww import GrowwBrokerClient
 from .database import PostgresDatabase
+from .paper_session import COST_RATE, ENTRY_CUTOFF, FLATTEN_TIME, PaperSessionMixin, serialized
 
 IST = ZoneInfo("Asia/Kolkata")
 ACCOUNT_ID = "kiwit-paper-main"
@@ -24,7 +25,7 @@ FRESHNESS_SECONDS = 120
 def _decimal(value: Any, default: Decimal | None = None) -> Decimal:
     try:
         result = Decimal(str(value))
-        if result > 0:
+        if result.is_finite() and result > 0:
             return result
     except (TypeError, ValueError, ArithmeticError):
         pass
@@ -35,6 +36,8 @@ def _decimal(value: Any, default: Decimal | None = None) -> Decimal:
 
 def _quote_time(payload: dict[str, Any], now: datetime) -> datetime:
     value = payload.get("timestamp") or payload.get("last_trade_time") or payload.get("lastTradeTime")
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
     if isinstance(value, (int, float)):
         if value > 10_000_000_000:
             value /= 1000
@@ -45,7 +48,7 @@ def _quote_time(payload: dict[str, Any], now: datetime) -> datetime:
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=IST).astimezone(UTC)
         except ValueError:
             pass
-    return now
+    raise ValueError("quote has no usable exchange timestamp; freshness cannot be verified")
 
 
 @dataclass(frozen=True)
@@ -116,7 +119,7 @@ class SignalMailer:
             return "failed", f"{type(error).__name__}: email delivery failed"
 
 
-class IntradayService:
+class IntradayService(PaperSessionMixin):
     """Persistent, human-approved paper workflow. It has no live-order code path."""
 
     def __init__(
@@ -143,8 +146,10 @@ class IntradayService:
         payload = self.broker.quote(symbol)
         last = _decimal(payload.get("last_price") or payload.get("ltp") or payload.get("lastPrice"))
         bid = _decimal(payload.get("bid_price") or payload.get("bid") or payload.get("best_bid_price"), last)
-        ask = _decimal(payload.get("ask_price") or payload.get("ask") or payload.get("best_ask_price"), last)
+        ask = _decimal(payload.get("offer_price") or payload.get("ask_price") or payload.get("ask") or payload.get("best_ask_price"), last)
         observed_at = _quote_time(payload, now)
+        if not 0 <= (now - observed_at).total_seconds() <= FRESHNESS_SECONDS:
+            raise ValueError("Groww quote is stale or future-dated")
         if ask < bid:
             bid = ask = last
         with self.database.transaction() as connection:
@@ -196,11 +201,28 @@ class IntradayService:
 
     def _create_signal(self, symbol: str, now: datetime) -> UUID | None:
         with self.database.transaction() as connection:
+            session = self._active_session(connection)
+            if not session and connection.execute('SELECT 1 FROM paper_sessions WHERE account_id=%s AND trading_date=%s',
+                                                 (self.settings.account_id,now.astimezone(IST).date())).fetchone():
+                return None  # completing a run must not fall back into the manual observer
+            if session and (session[5] == 'stopping' or session[1] != now.astimezone(IST).date()):
+                return None
+            if now.astimezone(IST).time() >= ENTRY_CUTOFF:
+                return None
+            if session and connection.execute(
+                "SELECT 1 FROM intraday_signals WHERE session_id=%s AND symbol=%s "
+                "AND (status IN ('pending','entered') OR exit_filled_at>%s) LIMIT 1",
+                (session[0],symbol,now-timedelta(minutes=5)),
+            ).fetchone():
+                return None
             rows = connection.execute(
                 "SELECT observed_at,last_price FROM intraday_quotes WHERE symbol=%s AND exchange='NSE' "
-                "ORDER BY observed_at DESC LIMIT 30", (symbol,),
+                "AND observed_at>=%s AND observed_at<=%s ORDER BY observed_at DESC LIMIT 30",
+                (symbol, datetime.combine(now.astimezone(IST).date(), time(9,30), IST), now),
             ).fetchall()
             if len(rows) < 20 or (now - rows[0][0]).total_seconds() > FRESHNESS_SECONDS:
+                return None
+            if any((rows[i][0]-rows[i+1][0]).total_seconds() > 120 for i in range(19)):
                 return None
             prices = [Decimal(row[1]) for row in reversed(rows)]
             current = prices[-1]
@@ -225,7 +247,9 @@ class IntradayService:
             risk_per_share = current * self.settings.stop_fraction
             risk_quantity = int((Decimal(account[0]) * self.settings.risk_fraction) / risk_per_share)
             notional_quantity = int((Decimal(account[0]) * self.settings.max_notional_fraction) / current)
-            quantity = max(1, min(risk_quantity, notional_quantity))
+            quantity = min(risk_quantity, notional_quantity)
+            if quantity < 1:
+                return None
             signal_id = uuid4()
             expires = min(now + timedelta(minutes=10), datetime.combine(now.astimezone(IST).date(), time(15, 15), IST))
             stop = current * (Decimal(1) - self.settings.stop_fraction)
@@ -234,18 +258,23 @@ class IntradayService:
                 "fast_sma": str(fast), "slow_sma": str(slow), "rsi2": str(rsi2),
                 "stop_fraction": str(self.settings.stop_fraction), "target_fraction": str(self.settings.target_fraction),
                 "paper_only": True,
+                "experimental": True,
+                "session_id": str(session[0]) if session else None,
             }
             inserted = connection.execute(
                 "INSERT INTO intraday_signals(signal_id,account_id,strategy_id,strategy_version,symbol,regime,pattern,side,"
-                "signal_at,expires_at,entry_price,stop_price,target_price,quantity,rationale,status) "
-                "VALUES(%s,%s,%s,%s,%s,%s,%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb,'pending') "
+                "signal_at,expires_at,entry_price,stop_price,target_price,quantity,rationale,status,session_id) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb,'pending',%s) "
                 "ON CONFLICT DO NOTHING RETURNING signal_id",
                 (signal_id, self.settings.account_id, STRATEGY_ID, STRATEGY_VERSION, symbol, regime, pattern, now, expires,
-                 current, stop, target, quantity, json.dumps(rationale)),
+                 current, stop, target, quantity, json.dumps(rationale), session[0] if session else None),
             ).fetchone()
             if not inserted:
                 return None
             self._audit(connection, "signal_created", "kiwit-worker", rationale, signal_id)
+        # Run sessions require no per-signal email or human approval; UI/audit are the activity log.
+        if session:
+            return signal_id
         signal = self.get_signal(signal_id)
         dashboard = os.getenv("KIWIT_DASHBOARD_URL", "/dashboard")
         delivery_status, error = self.mailer.send_signal(signal, dashboard)
@@ -315,12 +344,14 @@ class IntradayService:
             ],
         }
 
-    def review(self, signal_id: UUID, approved: bool, reviewer: str, reason: str, now: datetime | None = None) -> dict[str, Any]:
+    @serialized
+    def review(self, signal_id: UUID, approved: bool, reviewer: str, reason: str, now: datetime | None = None,
+               *, session_id: UUID | None = None) -> dict[str, Any]:
         now = now or datetime.now(UTC)
         with self.database.transaction() as connection:
             signal = connection.execute(
-                "SELECT symbol,expires_at,entry_price,quantity,status FROM intraday_signals WHERE signal_id=%s FOR UPDATE",
-                (signal_id,),
+                "SELECT symbol,expires_at,entry_price,quantity,status FROM intraday_signals WHERE signal_id=%s AND account_id=%s FOR UPDATE",
+                (signal_id, self.settings.account_id),
             ).fetchone()
             if not signal:
                 raise KeyError(str(signal_id))
@@ -350,16 +381,21 @@ class IntradayService:
                 "SELECT observed_at,ask_price FROM intraday_quotes WHERE symbol=%s ORDER BY observed_at DESC LIMIT 1",
                 (signal[0],),
             ).fetchone()
-            if not quote or (now - quote[0]).total_seconds() > FRESHNESS_SECONDS:
+            if not quote or not 0 <= (now - quote[0]).total_seconds() <= FRESHNESS_SECONDS:
                 raise ValueError("latest quote is stale; approval blocked")
             fill = Decimal(quote[1]) * Decimal("1.0005")
-            stop = fill * (Decimal(1) - self.settings.stop_fraction)
-            target = fill * (Decimal(1) + self.settings.target_fraction)
-            turnover = fill * signal[3]
             account = connection.execute(
                 "SELECT cash_balance,status FROM paper_accounts WHERE account_id=%s FOR UPDATE", (self.settings.account_id,),
             ).fetchone()
-            if not account or account[1] != "active" or account[0] < turnover:
+            if not account:
+                raise ValueError('paper account is unavailable')
+            terms = self.session_entry_terms(connection, signal_id, session_id, fill, now, account[0])
+            quantity, stop_fraction, target_fraction = terms or (signal[3], self.settings.stop_fraction, self.settings.target_fraction)
+            stop = fill * (1 - stop_fraction)
+            target = fill * (1 + target_fraction)
+            turnover = fill * quantity
+            fee = turnover * COST_RATE if session_id else Decimal(0)
+            if account[1] != "active" or account[0] < turnover + fee:
                 raise ValueError("paper account is unavailable or has insufficient cash")
             instrument_id = connection.execute(
                 "SELECT instrument_id FROM instruments WHERE exchange='NSE' AND symbol=%s AND series='EQ' "
@@ -375,61 +411,71 @@ class IntradayService:
                 instrument_id = instrument_id[0]
             connection.execute(
                 "UPDATE paper_accounts SET cash_balance=cash_balance-%s,updated_at=%s WHERE account_id=%s",
-                (turnover, now, self.settings.account_id),
+                (turnover + fee, now, self.settings.account_id),
             )
             connection.execute(
                 "INSERT INTO paper_positions(account_id,instrument_id,quantity,average_price,realized_pnl,updated_at) "
                 "VALUES(%s,%s,%s,%s,0,%s) ON CONFLICT(account_id,instrument_id) DO UPDATE SET "
                 "average_price=(paper_positions.average_price*paper_positions.quantity+EXCLUDED.average_price*EXCLUDED.quantity)/"
                 "(paper_positions.quantity+EXCLUDED.quantity),quantity=paper_positions.quantity+EXCLUDED.quantity,updated_at=EXCLUDED.updated_at",
-                (self.settings.account_id, instrument_id, signal[3], fill, now),
+                (self.settings.account_id, instrument_id, quantity, fill, now),
             )
             connection.execute(
                 "UPDATE intraday_signals SET status='entered',reviewed_by=%s,reviewed_at=%s,review_reason=%s,"
-                "entry_fill_price=%s,entry_filled_at=%s,stop_price=%s,target_price=%s,updated_at=%s WHERE signal_id=%s",
-                (reviewer, now, reason, fill, now, stop, target, now, signal_id),
+                "entry_fill_price=%s,entry_filled_at=%s,stop_price=%s,target_price=%s,quantity=%s,updated_at=%s WHERE signal_id=%s",
+                (reviewer, now, reason, fill, now, stop, target, quantity, now, signal_id),
             )
-            self._daily_trade(connection, now, turnover)
-            self._audit(connection, "paper_entry_filled", reviewer, {"price": str(fill), "quantity": signal[3]}, signal_id)
+            self._daily_trade(connection, now, turnover, fees=fee, realized=-fee)
+            self._audit(connection, "paper_entry_filled", reviewer, {"price": str(fill), "quantity": quantity,
+                        "entry_cost": str(fee), "session_id": str(session_id) if session_id else None}, signal_id)
         return self.get_signal(signal_id)
 
-    def _daily_trade(self, connection: Any, now: datetime, turnover: Decimal) -> None:
+    def _daily_trade(self, connection: Any, now: datetime, turnover: Decimal,
+                     *, fees: Decimal = Decimal(0), realized: Decimal = Decimal(0)) -> None:
         account = connection.execute(
             "SELECT cash_balance+COALESCE((SELECT sum(quantity*average_price) FROM paper_positions "
             "WHERE account_id=%s),0) FROM paper_accounts WHERE account_id=%s",
             (self.settings.account_id, self.settings.account_id),
         ).fetchone()
         connection.execute(
-            "INSERT INTO paper_daily_ledger(account_id,trading_date,starting_equity,turnover,trade_count,updated_at) "
-            "VALUES(%s,%s,%s,%s,1,%s) ON CONFLICT(account_id,trading_date) DO UPDATE SET "
+            "INSERT INTO paper_daily_ledger(account_id,trading_date,starting_equity,turnover,trade_count,updated_at,fees,realized_pnl) "
+            "VALUES(%s,%s,%s,%s,1,%s,%s,%s) ON CONFLICT(account_id,trading_date) DO UPDATE SET "
             "turnover=paper_daily_ledger.turnover+EXCLUDED.turnover,trade_count=paper_daily_ledger.trade_count+1,"
+            "fees=paper_daily_ledger.fees+EXCLUDED.fees,realized_pnl=paper_daily_ledger.realized_pnl+EXCLUDED.realized_pnl,"
             "updated_at=EXCLUDED.updated_at",
-            (self.settings.account_id, now.astimezone(IST).date(), account[0], turnover, now),
+            (self.settings.account_id, now.astimezone(IST).date(), account[0]-realized, turnover, now, fees, realized),
         )
 
-    def monitor_exits(self, now: datetime) -> int:
+    @serialized
+    def monitor_exits(self, now: datetime, *, force_reason: str | None = None, session_id: UUID | None = None) -> int:
         with self.database.transaction() as connection:
             rows = connection.execute(
-                "SELECT signal_id,symbol,quantity,stop_price,target_price,entry_fill_price FROM intraday_signals "
-                "WHERE account_id=%s AND status='entered' FOR UPDATE", (self.settings.account_id,),
+                "SELECT signal_id,symbol,quantity,stop_price,target_price,entry_fill_price,session_id FROM intraday_signals "
+                "WHERE account_id=%s AND status='entered' AND (%s::uuid IS NULL OR session_id=%s) FOR UPDATE",
+                (self.settings.account_id, session_id, session_id),
             ).fetchall()
             exits = 0
-            for signal_id, symbol, quantity, stop, target, entry in rows:
+            for signal_id, symbol, quantity, stop, target, entry, linked_session in rows:
                 quote = connection.execute(
                     "SELECT observed_at,bid_price FROM intraday_quotes WHERE symbol=%s ORDER BY observed_at DESC LIMIT 1",
                     (symbol,),
                 ).fetchone()
-                if not quote or (now - quote[0]).total_seconds() > FRESHNESS_SECONDS:
+                if not quote or not 0 <= (now - quote[0]).total_seconds() <= FRESHNESS_SECONDS:
                     continue
                 local = now.astimezone(IST)
-                reason = "stop_loss" if quote[1] <= stop else "take_profit" if quote[1] >= target else (
-                    "end_of_day" if local.time() >= time(15, 25) else None
+                if local.weekday() >= 5 or not time(9,30) <= local.time() < time(15,15):
+                    continue  # never fabricate a post-market fill
+                reason = force_reason or ("stop_loss" if quote[1] <= stop else "take_profit" if quote[1] >= target else (
+                    "end_of_day" if local.time() >= FLATTEN_TIME else None
+                )
                 )
                 if reason is None:
                     continue
                 fill = Decimal(quote[1]) / Decimal("1.0005")
                 turnover = fill * quantity
-                pnl = (fill - entry) * quantity
+                fee = turnover * COST_RATE if linked_session else Decimal(0)
+                entry_fee = entry * quantity * COST_RATE if linked_session else Decimal(0)
+                pnl = (fill - entry) * quantity - fee - entry_fee
                 instrument_id = connection.execute(
                     "SELECT instrument_id FROM instruments WHERE exchange='NSE' AND symbol=%s AND series='EQ' "
                     "ORDER BY valid_from DESC LIMIT 1", (symbol,),
@@ -441,13 +487,13 @@ class IntradayService:
                 )
                 connection.execute(
                     "UPDATE paper_accounts SET cash_balance=cash_balance+%s,realized_pnl=realized_pnl+%s,updated_at=%s "
-                    "WHERE account_id=%s", (turnover, pnl, now, self.settings.account_id),
+                    "WHERE account_id=%s", (turnover - fee, pnl, now, self.settings.account_id),
                 )
                 connection.execute(
                     "UPDATE intraday_signals SET status='exited',exit_fill_price=%s,exit_filled_at=%s,exit_reason=%s,"
                     "realized_pnl=%s,updated_at=%s WHERE signal_id=%s", (fill, now, reason, pnl, now, signal_id),
                 )
-                self._daily_trade(connection, now, turnover)
+                self._daily_trade(connection, now, turnover, fees=fee, realized=pnl+entry_fee)
                 self._audit(connection, "paper_exit_filled", "kiwit-worker", {
                     "price": str(fill), "quantity": quantity, "reason": reason, "realized_pnl": str(pnl),
                 }, signal_id)
@@ -479,6 +525,7 @@ class IntradayService:
             )
             self._audit(connection, "daily_reconciliation", "kiwit-worker", {"state": state, "date": str(trading_date)})
 
+    @serialized
     def run_once(self, now: datetime | None = None) -> dict[str, Any]:
         now = now or datetime.now(UTC)
         run_id = uuid4()
@@ -493,14 +540,24 @@ class IntradayService:
             if not self.settings.enabled:
                 state, detail = "disabled", "KIWIT_INTRADAY_ENABLED is false"
             elif window in {"entry_window", "reconciliation_window"}:
+                errors = []
                 for symbol in self.settings.symbols:
-                    self.ingest_quote(symbol, now)
-                    ingested += 1
+                    try:
+                        self.ingest_quote(symbol, now)
+                        ingested += 1
+                    except Exception as error:  # noqa: BLE001 - keep exits available when one feed fails
+                        explanation = ('Groww session approval required' if 'approval' in str(error).lower()
+                                       else 'market data unavailable or stale')
+                        errors.append(f'{symbol}: {type(error).__name__}: {explanation}')
                 exits = self.monitor_exits(now)
-                if window == "entry_window" and now.astimezone(IST).time() <= time(15, 15):
+                self.session_tick(now)
+                if window == "entry_window" and now.astimezone(IST).time() < ENTRY_CUTOFF:
                     created = sum(self._create_signal(symbol, now) is not None for symbol in self.settings.symbols)
+                    self.session_tick(now)
                 if window == "reconciliation_window":
                     self.reconcile(now)
+                if errors:
+                    state, detail = 'data_unavailable', '; '.join(errors)
             else:
                 state, detail = "outside_window", "Runs weekdays from 09:30 to 15:45 IST"
         except Exception as error:  # noqa: BLE001 - worker must persist every unexpected run failure

@@ -8,6 +8,7 @@ import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -50,6 +51,12 @@ class LoginRequest(BaseModel):
 
 class SignalReviewRequest(BaseModel):
     reason: str = Field(default="Reviewed in kiwiT dashboard", min_length=2, max_length=500)
+
+
+class PaperSessionRequest(BaseModel):
+    amount: Decimal = Field(gt=0, le=1_000_000, max_digits=12, decimal_places=2)
+    loss_pct: Decimal = Field(gt=0, le=25, max_digits=8, decimal_places=4)
+    profit_pct: Decimal = Field(gt=0, le=100, max_digits=8, decimal_places=4)
 
 
 def _valid_api_key(supplied: str) -> bool:
@@ -187,7 +194,28 @@ def create_app(
         result = service.list_signals()
         result["available"] = True
         result["freshness"] = service.freshness()
+        result["session"] = service.session_status()
         return result
+
+    @app.post('/api/v1/intraday/session/run', dependencies=protected)
+    def start_paper_session(body: PaperSessionRequest, request: Request) -> dict[str, Any]:
+        service = request.app.state.intraday
+        if service is None:
+            raise HTTPException(503, 'Paper session service unavailable')
+        user = request.app.state.auth.authenticate(request.cookies.get('kiwit_session', ''))
+        try:
+            return service.start_session(body.amount, body.loss_pct, body.profit_pct,
+                                         user.email if user else 'api-key-operator')
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
+    @app.post('/api/v1/intraday/session/stop', dependencies=protected)
+    def stop_paper_session(request: Request) -> dict[str, Any]:
+        service = request.app.state.intraday
+        if service is None:
+            raise HTTPException(503, 'Paper session service unavailable')
+        user = request.app.state.auth.authenticate(request.cookies.get('kiwit_session', ''))
+        return service.stop_session(user.email if user else 'api-key-operator') or {'state':'idle'}
 
     @app.post("/api/v1/intraday/signals/{signal_id}/approve", dependencies=protected)
     def approve_intraday_signal(signal_id: uuid.UUID, body: SignalReviewRequest, request: Request) -> dict[str, Any]:

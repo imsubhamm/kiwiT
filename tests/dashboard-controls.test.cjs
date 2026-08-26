@@ -37,7 +37,8 @@ function setup({failOperations=false, signals=[]} = {}) {
     fetch:async (url,opts)=>{
       calls.push({url,opts});
       if (url.endsWith('/operations') && failOperations) return {ok:false,status:503,json:async()=>({detail:'Database unavailable'})};
-      const data = url.endsWith('/me')?{email:'operator@example.test'}:url.includes('/intraday/status')?feed:
+      const data = url.endsWith('/session/run')?{state:'armed',trading_date:'2026-08-26',amount:'10000',loss_pct:'5',profit_pct:'10',detail:'Waiting',pnl:'0',exposure:'0',entries:0,open_positions:0}:
+        url.endsWith('/me')?{email:'operator@example.test'}:url.includes('/intraday/status')?feed:
         url.includes('regime-router')?{strategy_id:'regime_router',version:'1.0.0',decision:'rejected',dataset:{end:'2026-08-20'}}:
         url.endsWith('/operations')?{}:account;
       return {ok:true,status:200,json:async()=>data};
@@ -84,4 +85,25 @@ test('stale age is recomputed even without a successful refresh',async()=>{
   feed.freshness.instruments[0].observed_at=new Date(Date.now()-180000).toISOString();
   timers[0]();assert.equal(nodes['feed-status'].textContent,'STALE');
   assert.ok(nodes['feed-status'].parentElement.classList.contains('stale'));
+});
+
+test('Run is one request, carries the limits and needs no confirmation dialog',async()=>{
+  const {context,nodes,calls}=setup();await settle();
+  nodes['run-amount'].value='10000';nodes['run-loss'].value='5';nodes['run-profit'].value='10';
+  await vm.runInContext("sessionAction(null,'run')",context);
+  const submitted=calls.filter(c=>c.url.endsWith('/session/run'));
+  assert.equal(submitted.length,1);
+  assert.deepEqual(JSON.parse(submitted[0].opts.body),{amount:'10000',loss_pct:'5',profit_pct:'10'});
+  assert.match(nodes['action-status'].textContent,/Run approved/);
+});
+
+test('active run disables duplicate Run, exposes Stop, and hides per-trade approvals',async()=>{
+  const {context,nodes,feed}=setup();await settle();
+  feed.session={session_id:'s',state:'running',trading_date:'2026-08-26',amount:'10000',loss_pct:'5',profit_pct:'10',detail:'Scanning',entries:0,open_positions:0,pnl:'0',exposure:'0',valuation_fresh:true};
+  feed.signals=[{signal_id:'x',status:'pending',symbol:'NIFTYBEES',pattern:'breakout',regime:'bull',signal_at:new Date().toISOString(),rationale:{session_id:'s'}}];
+  await vm.runInContext('refresh()',context);
+  assert.equal(nodes['run-session'].disabled,true);
+  assert.equal(nodes['stop-session'].disabled,false);
+  assert.ok(!nodes['pending-signals'].innerHTML.includes('Approve paper buy'));
+  assert.match(nodes['signal-help'].textContent,/No per-trade approval/);
 });

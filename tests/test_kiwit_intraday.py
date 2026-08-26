@@ -33,6 +33,10 @@ def test_intraday_approval_obeys_dashboard_halt_before_any_fill():
     now = datetime.now(UTC)
 
     class Connection:
+        @contextmanager
+        def transaction(self):
+            yield self
+
         def __init__(self):
             self.statements = []
 

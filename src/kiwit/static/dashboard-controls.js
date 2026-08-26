@@ -4,6 +4,7 @@ let nextRefreshAt = 0;
 let authenticated = false;
 let lastFeed = null;
 let reviewInFlight = false;
+let runInFlight = false;
 const refreshEveryMs = 30000;
 const formatTime = value => value ? new Date(value).toLocaleString('en-IN', {timeZone:'Asia/Kolkata'}) + ' IST' : 'Not recorded';
 
@@ -17,10 +18,13 @@ function setActiveSection(id) {
 }
 
 function renderSignalContext(data) {
+  renderSession(data.session, data.available);
   lastFeed = data.freshness;
   const signals = data.signals || [];
   $('signal-help').textContent = !data.available
     ? 'Signal service unavailable. Approvals cannot be submitted.'
+    : data.session && ['armed','running','stopping'].includes(data.session.state)
+      ? 'Run owns strategy selection and paper entries/exits. No per-trade approval is needed. Use Stop & exit to end the run.'
     : signals.some(signal => signal.status === 'pending')
       ? 'Review a pending card below. Approval simulates a purchase; it does not place a Groww order.'
       : 'No pending signal to approve or reject. The observer needs at least 20 stored quotes and a matching setup; no trade is guaranteed. This experimental observer is not an approved router strategy.';
@@ -31,6 +35,37 @@ function renderSignalContext(data) {
     ? `Latest reconciliation: ${record.trading_date} · ${record.state} · ${record.open_positions} open · ${record.pending_signals} pending · P&L ₹${money(record.realized_pnl)}`
     : 'No daily reconciliation recorded yet. Scheduled after 15:30 IST.';
   updateFeedAge();
+}
+
+function renderSession(session, available = true) {
+  const active = session && ['armed','running','stopping'].includes(session.state);
+  const today = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Kolkata'}).format(new Date());
+  const usedToday = session?.trading_date === today;
+  $('run-session').disabled = !available || runInFlight || active || usedToday;
+  $('stop-session').disabled = !available || runInFlight || !active || session.state === 'stopping';
+  for (const [id, key] of [['run-amount','amount'],['run-loss','loss_pct'],['run-profit','profit_pct']]) {
+    $(id).disabled = Boolean(active || usedToday || runInFlight);
+    if (session && (active || usedToday)) $(id).value = session[key];
+  }
+  $('run-state').textContent = !available ? 'Session service unavailable' : session ? `PAPER · ${session.state.toUpperCase()} · ${session.trading_date}` : 'Ready for your Run approval';
+  $('run-detail').textContent = session?.detail || 'Enter an amount and limits, then click Run once. The server handles matching setups and exits.';
+  $('run-pnl').textContent = session ? `Net session P&L ₹${money(session.pnl)} · allocated ₹${money(session.amount)} · deployed ₹${money(session.exposure)} · ${session.entries} entries · ${session.open_positions} open${session.valuation_fresh ? '' : ' · STALE VALUATION — not current'}` : 'Session P&L —';
+}
+
+async function sessionAction(event, action) {
+  event?.preventDefault();
+  if (runInFlight) return;
+  runInFlight = true;
+  $('run-session').disabled = $('stop-session').disabled = true;
+  $('run-detail').textContent = action === 'run' ? 'Saving your paper-session approval…' : 'Requesting stop; exits require fresh market quotes…';
+  try {
+    const body = action === 'run' ? JSON.stringify({amount:$('run-amount').value,loss_pct:$('run-loss').value,profit_pct:$('run-profit').value}) : undefined;
+    const data = await call(`/api/v1/intraday/session/${action}`, {method:'POST',body});
+    renderSession(data);
+    $('action-status').textContent = action === 'run' ? 'Run approved. Automatic paper decisions begin on the next worker tick; no per-trade clicks.' : 'Stop requested. No further session entries; fresh-quote exits are monitored by the server.';
+  } catch(error) {showError(error); $('run-detail').textContent = error.message}
+  finally {runInFlight = false}
+  await refresh();
 }
 
 function updateFeedAge() {
@@ -49,7 +84,7 @@ function updateFeedAge() {
 
 async function refresh() {
   if (syncInFlight) return syncInFlight;
-  if (reviewInFlight) return;
+  if (reviewInFlight || runInFlight) return;
   syncInFlight = (async () => {
     const button = $('refresh');
     button.disabled = true;
@@ -72,6 +107,7 @@ async function refresh() {
       $('feed-status').textContent = 'UNAVAILABLE';
       $('pending-signals').innerHTML = '<p class="empty">Signal service unavailable. Previous controls removed; retry sync.</p>';
       $('feed-detail').textContent = 'Could not refresh. Previously displayed values may be old.';
+      renderSession(null, false);
     }
     const message = failures.length ? `Partial sync — ${failures.join(' · ')}` : `Synchronized · ${formatTime(new Date())}`;
     $('system-state').textContent = failures.length ? 'Connection needs attention' : 'Workspace connected';
@@ -141,6 +177,8 @@ document.querySelectorAll('a[href^="#"]').forEach(link => {
   });
 });
 $('refresh').addEventListener('click', refresh);
+$('run-form').addEventListener('submit', event => sessionAction(event, 'run'));
+$('stop-session').addEventListener('click', event => sessionAction(event, 'stop'));
 $('halt').addEventListener('click', () => safetyAction('halt'));
 $('resume').addEventListener('click', () => safetyAction('resume'));
 $('pending-signals').addEventListener('click', reviewSignal);
