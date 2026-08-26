@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -92,6 +93,39 @@ class GrowwBrokerTests(unittest.TestCase):
             self.assertTrue(transport.requests[0][0].full_url.endswith("/v1/token/api/access"))
             self.assertEqual(transport.requests[1][0].get_header("Authorization"), "Bearer generated-access-token-long-enough")
             self.assertEqual(Path(cache).stat().st_mode & 0o777, 0o600)
+
+    def test_read_only_request_refreshes_cached_token_once_after_403(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "token.json"
+            cache.write_text(json.dumps({
+                "token": "stale-access-token-long-enough",
+                "expiry": (datetime.now(UTC) + timedelta(hours=3)).isoformat(),
+            }))
+
+            class RefreshTransport:
+                def __init__(self):
+                    self.requests = []
+
+                def __call__(self, request, timeout):
+                    self.requests.append((request, timeout))
+                    if len(self.requests) == 1:
+                        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, None)
+                    if request.full_url.endswith("/v1/token/api/access"):
+                        return 200, json.dumps({
+                            "token": "refreshed-access-token-long-enough",
+                            "expiry": (datetime.now(UTC) + timedelta(hours=3)).isoformat(),
+                        }).encode()
+                    return 200, json.dumps({"status": "SUCCESS", "payload": {"nse_enabled": True}}).encode()
+
+            transport = RefreshTransport()
+            settings = GrowwSettings(
+                access_token="api-key-that-is-long-enough", api_secret="test-secret", token_cache_path=str(cache),
+            )
+            self.assertTrue(GrowwBrokerClient(settings, transport).profile()["nse_enabled"])
+            self.assertEqual(len(transport.requests), 3)
+            self.assertEqual(
+                transport.requests[2][0].get_header("Authorization"), "Bearer refreshed-access-token-long-enough",
+            )
 
     def test_environment_requires_a_real_token_length(self):
         with (

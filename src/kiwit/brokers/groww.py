@@ -118,12 +118,15 @@ class GrowwBrokerClient:
             raise BrokerApiError("Groww token cache is unavailable") from error
         return token
 
-    def _request(self, method: str, path: str, *, query: dict[str, str] | None = None) -> dict[str, Any]:
-        if not path.startswith("/v1/") or ".." in path:
-            raise ValueError("invalid Groww API path")
-        url = f"{self.settings.base_url}{path}"
-        if query:
-            url += "?" + urllib.parse.urlencode(query)
+    def _clear_token_cache(self) -> None:
+        if not self.settings.api_secret:
+            return
+        try:
+            Path(self.settings.token_cache_path).unlink(missing_ok=True)
+        except OSError as error:
+            raise BrokerApiError("Groww token cache is unavailable") from error
+
+    def _send(self, method: str, url: str) -> tuple[int, bytes]:
         request = urllib.request.Request(
             url,
             method=method,
@@ -134,10 +137,29 @@ class GrowwBrokerClient:
                 "User-Agent": "kiwiT/0.1 broker-reconciliation",
             },
         )
+        return self.transport(request, self.settings.timeout_seconds)
+
+    def _request(self, method: str, path: str, *, query: dict[str, str] | None = None) -> dict[str, Any]:
+        if not path.startswith("/v1/") or ".." in path:
+            raise ValueError("invalid Groww API path")
+        url = f"{self.settings.base_url}{path}"
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
         try:
-            status_code, body = self.transport(request, self.settings.timeout_seconds)
+            status_code, body = self._send(method, url)
         except urllib.error.HTTPError as error:
-            raise BrokerApiError(f"Groww request rejected with HTTP {error.code}") from error
+            # A newly approved session/subscription can invalidate an access token
+            # that was generated earlier. Refresh once, only for read-only calls.
+            if error.code == 403 and method == "GET" and self.settings.api_secret:
+                self._clear_token_cache()
+                try:
+                    status_code, body = self._send(method, url)
+                except urllib.error.HTTPError as retry_error:
+                    raise BrokerApiError(f"Groww request rejected with HTTP {retry_error.code}") from retry_error
+                except (TimeoutError, urllib.error.URLError) as retry_error:
+                    raise BrokerApiError("Groww request unavailable") from retry_error
+            else:
+                raise BrokerApiError(f"Groww request rejected with HTTP {error.code}") from error
         except (TimeoutError, urllib.error.URLError) as error:
             raise BrokerApiError("Groww request unavailable") from error
         if status_code != 200:
