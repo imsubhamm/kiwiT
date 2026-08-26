@@ -7,6 +7,12 @@ There is no per-trade approval dialog. Closing the browser does not stop the EC2
 **Stop & exit** revokes entries and requests liquidation at the next fresh market quote.
 It must not be described as an immediate fill or guaranteed maximum loss.
 
+The deployed dashboard uses `kiwit-paper-auto`, a separate ₹10,00,000 simulated ledger.
+Your Run amount allocates only part of this virtual balance. `kiwit-paper-main` and its
+old demonstration holding/history are preserved, not liquidated or reset. No real funds
+are deposited, transferred or reserved at Groww. The auto account produces no signals
+until a day-scoped Run approval exists.
+
 ## Exact boundaries
 
 - Paper-only, currently the configured cash-equity/ETF symbol list (default NIFTYBEES).

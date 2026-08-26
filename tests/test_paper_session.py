@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal as D
 from pathlib import Path
@@ -107,7 +108,7 @@ def test_run_auto_entry_exit_and_duplicate_requests(service, connection):
     assert D(result["realized_pnl"]) < 0  # spread/slippage + costs, no fake zero-cost profit
     assert service.session_status()["state"] == "completed"
     assert connection.execute("SELECT sum(quantity) FROM paper_positions").fetchone()[0] == 0
-    cash, pnl = connection.execute("SELECT cash_balance,realized_pnl FROM paper_accounts").fetchone()
+    cash, pnl = connection.execute("SELECT cash_balance,realized_pnl FROM paper_accounts WHERE account_id='kiwit-paper-main'").fetchone()
     assert abs(cash - D(100000) - pnl) < D(".000001")
     assert service.start_session(10000, 5, 10, "test-operator", NOW)["state"] == "completed"
 
@@ -234,3 +235,14 @@ def test_scheduled_worker_runs_whole_flow_without_per_trade_approval(service, co
     assert result['state'] == 'completed', result
     assert service.session_status()['state'] == 'completed'
     assert service.session_status()['open_positions'] == 0
+
+
+def test_auto_account_is_isolated_and_requires_run(service, connection):
+    entered(service,connection)  # old account can retain its holding
+    automatic=IntradayService(BoundDatabase(connection),object(),replace(service.settings,account_id='kiwit-paper-auto'))
+    assert automatic._create_signal('NIFTYBEES',NOW) is None
+    assert automatic.start_session(10000,5,10,'test',NOW)['state'] == 'armed'
+    sid=automatic._create_signal('NIFTYBEES',NOW)
+    automatic.session_tick(NOW)
+    assert automatic.get_signal(sid)['status'] == 'entered'
+    assert len(automatic.list_signals()['signals']) == 1

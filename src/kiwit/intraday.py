@@ -202,6 +202,8 @@ class IntradayService(PaperSessionMixin):
     def _create_signal(self, symbol: str, now: datetime) -> UUID | None:
         with self.database.transaction() as connection:
             session = self._active_session(connection)
+            if self.settings.account_id == 'kiwit-paper-auto' and not session:
+                return None  # this account trades only under explicit day-scoped Run consent
             if not session and connection.execute('SELECT 1 FROM paper_sessions WHERE account_id=%s AND trading_date=%s',
                                                  (self.settings.account_id,now.astimezone(IST).date())).fetchone():
                 return None  # completing a run must not fall back into the manual observer
@@ -311,10 +313,12 @@ class IntradayService(PaperSessionMixin):
     def list_signals(self, limit: int = 100) -> dict[str, Any]:
         with self.database.connect(autocommit=True) as connection:
             ids = connection.execute(
-                "SELECT signal_id FROM intraday_signals ORDER BY signal_at DESC LIMIT %s", (limit,),
+                "SELECT signal_id FROM intraday_signals WHERE account_id=%s ORDER BY signal_at DESC LIMIT %s",
+                (self.settings.account_id, limit),
             ).fetchall()
             deliveries = connection.execute(
-                "SELECT status,count(*) FROM notification_deliveries GROUP BY status"
+                "SELECT n.status,count(*) FROM notification_deliveries n JOIN intraday_signals s USING(signal_id) "
+                "WHERE s.account_id=%s GROUP BY n.status", (self.settings.account_id,),
             ).fetchall()
             audit_rows = connection.execute(
                 "SELECT event_id,signal_id,event_type,actor,event_at,details FROM intraday_audit_events "
