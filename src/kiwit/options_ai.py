@@ -96,7 +96,8 @@ class OpenAIPaperAnalyst:
             headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
         )
         # No automatic retries: ambiguous failures keep the full durable reservation.
-        with urllib.request.urlopen(request, timeout=25) as response:
+        # Fixed HTTPS endpoint above; neither user nor model supplies a URL.
+        with urllib.request.urlopen(request, timeout=25) as response:  # nosec B310
             payload = json.loads(response.read(200_000))
         try:
             return parse_response(payload)

@@ -16,8 +16,11 @@ jobs:
   test:
     uses: ./.github/workflows/ci.yml
 
+  security:
+    uses: ./.github/workflows/security.yml
+
   deploy:
-    needs: test
+    needs: [test, security]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production

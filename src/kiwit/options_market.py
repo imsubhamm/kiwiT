@@ -80,7 +80,8 @@ class BankNiftyMarket:
         stamp = datetime.fromisoformat(history[-1]["at"])
         spot = positive(history[-1]["spot"])
         # Public instrument master: no broker credentials sent to the asset host.
-        with urllib.request.urlopen(
+        # Literal HTTPS URL only; no caller-controlled schemes or paths.
+        with urllib.request.urlopen(  # nosec B310
             "https://growwapi-assets.groww.in/instruments/instrument.csv", timeout=15
         ) as response:
             body = response.read(30_000_001)
