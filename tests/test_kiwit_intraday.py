@@ -1,4 +1,9 @@
 from datetime import UTC, datetime
+from contextlib import contextmanager
+from datetime import timedelta
+from uuid import uuid4
+
+import pytest
 
 from kiwit.intraday import IntradayService, SignalMailer, _quote_time
 
@@ -22,3 +27,36 @@ def test_mailer_fails_closed_when_not_configured(monkeypatch) -> None:
     status, detail = mailer.send_signal({}, "/dashboard")
     assert status == "not_configured"
     assert "not configured" in detail
+
+
+def test_intraday_approval_obeys_dashboard_halt_before_any_fill():
+    now = datetime.now(UTC)
+
+    class Connection:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, sql, params=None):
+            self.statements.append(sql)
+            self.sql = sql
+            return self
+
+        def fetchone(self):
+            if 'FROM intraday_signals' in self.sql:
+                return ('NIFTYBEES', now + timedelta(minutes=5), 100, 1, 'pending')
+            if 'FROM system_halts' in self.sql:
+                return (True,)
+            raise AssertionError('Entry progressed beyond halt check')
+
+    connection = Connection()
+
+    class Database:
+        @contextmanager
+        def transaction(self):
+            yield connection
+
+    service = IntradayService(Database(), None)
+    with pytest.raises(ValueError, match='entries are halted'):
+        service.review(uuid4(), True, 'test-operator', 'test', now)
+    assert 'LOCK TABLE system_halts IN SHARE MODE' in connection.statements
+    assert not any(sql.startswith(('INSERT', 'UPDATE')) for sql in connection.statements)

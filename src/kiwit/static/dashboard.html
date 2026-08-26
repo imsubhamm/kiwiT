@@ -5,6 +5,8 @@
   <title>kiwiT · Trading intelligence</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/dashboard.css"><link rel="stylesheet" href="/static/router.css"><link rel="stylesheet" href="/static/sync-feedback.css"><link rel="stylesheet" href="/static/intraday.css">
 </head>
 <body>
+  <div id="preview-notice" role="alert">Local HTML preview cannot connect to kiwiT. <a href="https://souls-inquiry-detected-unified.trycloudflare.com/dashboard">Open the secure dashboard</a>. On the deployed page, this notice disappears when JavaScript loads.</div>
+  <noscript>JavaScript is required for live data and controls. Navigation links still work.</noscript>
   <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
   <div class="shell">
     <aside class="sidebar">
@@ -13,10 +15,11 @@
       <div class="sidebar-foot"><div class="mode-card"><span class="pulse"></span><div><strong>Paper mode</strong><small>Live capital protected</small></div></div><p>KIWIT SYSTEMS · INDIA</p></div>
     </aside>
     <div class="workspace">
-      <header class="topbar"><div><p class="breadcrumb">KIWIT / COMMAND CENTER</p><h1>Good day, Operator.</h1></div><div class="market-state"><span class="pulse"></span><div><strong>System online</strong><small id="clock">IST · --:--:--</small></div></div></header>
+      <header class="topbar"><div><p class="breadcrumb">KIWIT / COMMAND CENTER</p><h1>Good day, Operator.</h1></div><div class="market-state"><span class="pulse"></span><div><strong id="system-state">Checking connection</strong><small id="clock">IST · --:--:--</small></div></div></header>
       <main id="overview">
         <section class="hero reveal"><div class="hero-copy"><span class="kicker"><i></i>RESEARCH-GRADE EXECUTION</span><h2>Clarity before<br><em>capital.</em></h2><p>Evidence-led market intelligence, disciplined risk controls, and transparent paper execution—composed in one calm workspace.</p></div><div class="hero-orbit" aria-hidden="true"><span class="orbit orbit-a"></span><span class="orbit orbit-b"></span><span class="orb-core">K</span></div><div class="hero-badge"><span>EXECUTION</span><strong>PAPER ONLY</strong></div></section>
         <section class="credentials glass reveal delay-1"><label><span>Signed-in operator</span><input id="signed-in-user" value="Loading session…" readonly></label><label><span>Paper account</span><input id="account" value="kiwit-paper-main"></label><button id="refresh" class="button primary"><span>Sync workspace</span><b>↗</b></button><button id="logout" class="button ghost">Sign out</button><div id="connection" class="connection" aria-live="polite"><i></i><span>Awaiting connection</span></div></section>
+        <div class="workspace-feedback" role="status"><span id="refresh-status">Waiting for sign-in</span><span id="action-status"></span><a href="#signals">Go to trade signals ↓</a></div>
         <section class="metrics reveal delay-2">
           <article class="metric-card plum"><div class="metric-top"><span>Cash balance</span><i>₹</i></div><strong id="cash">—</strong><small>SIMULATED INR</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 45 C25 45,30 28,55 33 S88 45,110 25 S143 14,160 23 S194 39,240 7"/></svg></article>
           <article class="metric-card gold"><div class="metric-top"><span>Realized P&amp;L</span><i>↗</i></div><strong id="pnl">—</strong><small>LEDGER TOTAL</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 40 C20 34,34 42,51 33 S76 19,96 26 S128 46,148 30 S180 16,201 18 S219 11,240 5"/></svg></article>
@@ -29,6 +32,10 @@
           <div class="signal-warning"><i>◆</i><p><strong>Approval creates a simulated fill only.</strong><span>5% stop · 10% target · deterministic sizing · stale approvals blocked · Groww mutations disabled</span></p></div>
           <div class="broker-access"><div><span class="eyebrow">GROWW · READ ONLY</span><strong id="broker-access-title">Daily session approval</strong><small id="broker-access-detail">kiwiT generates the temporary access token automatically after approval.</small></div><a class="button ghost" href="https://groww.in/trade-api/api-keys" target="_blank" rel="noopener noreferrer">Open Groww approval ↗</a></div>
           <div id="pending-signals" class="signal-list"><p class="empty">No signal data loaded. Sync the workspace.</p></div>
+          <p class="control-note" id="signal-help">Approve and Reject appear only on pending signals. This is an experimental paper observer, not the approved Regime Router strategy.</p>
+          <p class="control-note" id="feed-times">Quote and worker timestamps have not loaded.</p>
+          <div id="delivery-summary" class="control-note">Email delivery status has not loaded.</div>
+          <div id="reconciliation-summary" class="control-note">Daily reconciliation has not loaded.</div>
           <div class="signal-audit"><div><span class="eyebrow">IMMUTABLE ACTIVITY</span><h4>Approval and exit audit</h4></div><div id="signal-audit"><p class="empty">No audit events loaded.</p></div></div>
         </section>
         <section class="content-grid reveal delay-3">
@@ -37,6 +44,7 @@
         </section>
         <section class="panel glass research reveal" id="research"><div class="research-intro"><span class="eyebrow">KIWIT INTELLIGENCE</span><h3>Ask the evidence.</h3><p>Search the curated corpus of trading books and research with traceable citations.</p></div><div class="research-body"><div class="search"><span>⌕</span><input id="query" placeholder="Why should stops determine position size?"><button id="search" class="button primary">Retrieve insight</button></div><div id="results" class="results"><p class="empty">Your research results will appear here.</p></div></div></section>
         <section class="approval panel glass reveal" id="approval">
+          <div class="evidence-notice"><strong>Archived research · not a live-price panel</strong><p>The cards below describe the frozen v1 backtest. Refreshing does not rerun research or approve a strategy. The server snapshot status is checked on every sync.</p><p id="evidence-status">Evidence snapshot not yet checked.</p><details><summary>Why can’t I approve this strategy?</summary><p>v1 failed three gates. There is no dashboard promotion button or research-job runner yet. A new frozen strategy must pass independent tests before promotion. Checkmarks and crosses are results, not controls.</p></details><a href="#signals">Open the live paper signal desk →</a></div>
           <div class="approval-head"><div><span class="eyebrow">EVIDENCE GATE · REGIME ROUTER V1</span><h3>Strategy approval</h3><p>The complete regime classifier, strategy router, cash fallback and portfolio are tested as one immutable system.</p></div><div class="decision rejected"><span>CURRENT DECISION</span><strong><i></i>NOT APPROVED</strong><small>0 of 3 candidates promoted</small></div></div>
           <div class="approval-summary"><div><span>Dataset</span><strong>3.02M observations</strong><small>2020-01-01 → 2026-08-20</small></div><div><span>Universe</span><strong>3,359 NSE symbols</strong><small>Point-in-time · top 250 liquid</small></div><div><span>Execution</span><strong>Next session open</strong><small>Daily mark-to-market</small></div><div><span>Cost model</span><strong>10 bps / side</strong><small>Stress tested to 30 bps</small></div></div>
           <div class="candidate-grid">
@@ -48,6 +56,7 @@
           <div class="next-experiment"><span>→</span><p><strong>Next evidence task</strong>Design a separately frozen v2 hypothesis that reduces drawdown and proves entry timing beyond randomized selection. Do not tune v1.</p><em>V1 ARCHIVED · LOCKED</em></div>
         </section>
         <section class="operations panel glass reveal" id="operations">
+          <p class="control-note">This review covers the promoted-strategy evidence workflow, which remains locked. The separate intraday observer may collect experimental paper trades; those do not establish router approval. Failure-test labels below are static implementation assertions, not current production drill results.</p>
           <div class="ops-head"><div><span class="eyebrow">PAPER OPERATIONS</span><h3>Evidence collection</h3><p>Automated observation, failure readiness and formal review in one place.</p></div><div class="ops-status"><span>AUTOMATION</span><strong id="automation-status">LOCKED</strong><small id="automation-reason">Waiting for an approved strategy</small></div></div>
           <div class="ops-grid">
             <article class="equity-panel"><div class="mini-head"><div><span>EQUITY CURVE</span><strong id="ops-equity">—</strong></div><div><span>MAX DRAWDOWN</span><strong id="ops-drawdown">—</strong></div></div><svg id="equity-chart" viewBox="0 0 700 180" preserveAspectRatio="none" aria-label="Paper equity curve"><defs><linearGradient id="equity-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b9f55d" stop-opacity=".22"/><stop offset="1" stop-color="#b9f55d" stop-opacity="0"/></linearGradient></defs><path class="area" d="M0 150 L700 150 L700 180 L0 180Z"/><path class="line" d="M0 150 L700 150"/></svg><div class="chart-caption"><span id="ops-sessions">0 / 40 sessions</span><span>REALIZED EQUITY · INR</span></div></article>
@@ -61,4 +70,5 @@
     </div>
   </div>
   <script src="/static/dashboard.js" defer></script>
+  <script src="/static/dashboard-controls.js" defer></script>
 </body></html>

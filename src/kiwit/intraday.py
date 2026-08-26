@@ -337,6 +337,15 @@ class IntradayService:
                 )
                 self._audit(connection, "signal_rejected", reviewer, {"reason": reason}, signal_id)
                 return {"signal_id": str(signal_id), "status": "rejected", "execution": "paper-only"}
+            # Share-lock also serializes this check with halt inserts/releases.
+            # Existing exits deliberately remain possible while entries are halted.
+            connection.execute("LOCK TABLE system_halts IN SHARE MODE")
+            halted = connection.execute(
+                "SELECT EXISTS(SELECT 1 FROM system_halts WHERE active AND scope IN ('global',%s))",
+                (self.settings.account_id,),
+            ).fetchone()[0]
+            if halted:
+                raise ValueError("paper entries are halted; release the safety halt before approving")
             quote = connection.execute(
                 "SELECT observed_at,ask_price FROM intraday_quotes WHERE symbol=%s ORDER BY observed_at DESC LIMIT 1",
                 (signal[0],),
