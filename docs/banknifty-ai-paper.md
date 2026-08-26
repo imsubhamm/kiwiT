@@ -8,6 +8,13 @@ no fine-tuning occurs, and no news or historical edge is claimed. Model summarie
 are recorded, not hidden chain-of-thought. BUY is long premium only; EXIT cannot
 open a short. The deterministic boundary can reject any model decision.
 
+The chart-evidence extension now adds five prior complete observed sessions,
+completed 1m/5m/15m analysis, explicit setups and dashboard candles. New entries
+require fresh matching chart evidence. See [CHART_ANALYSIS.md](CHART_ANALYSIS.md)
+for precise rules, coverage, caching and remaining limitations. Raw chart bars
+remain in the session; compact evidence is sent to the model within the existing
+request-size and API-budget limits.
+
 ## Enable only after migration, tests and feed verification
 
 1. Apply migration 010 with the existing migration tool.

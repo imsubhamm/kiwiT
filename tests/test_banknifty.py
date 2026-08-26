@@ -11,6 +11,7 @@ from kiwit.banknifty import BankNiftyService, quantity_for
 from kiwit.options_ai import parse_response, request_body
 from kiwit.options_market import completed_candles, contracts_from_csv, executable_quote
 from kiwit.paper_session import BoundDatabase
+from kiwit.chart_analysis import VERSION
 
 NOW = datetime(2026, 8, 26, 5, 0, tzinfo=UTC)
 CONTRACT = {
@@ -144,6 +145,31 @@ def test_hallucinated_contract_is_blocked(desk):
     assert "outside" in service.status()["session"]["detail"]
 
 
+def test_buy_without_matching_chart_evidence_is_blocked(desk):
+    service, market, _analyst, _clock = desk
+    original = market.snapshot
+    def missing_evidence(now):
+        snapshot = original(now)
+        snapshot['chart_analysis']['patterns'] = []
+        return snapshot
+    market.snapshot = missing_evidence
+    assert warm(desk)['position'] is None
+    assert 'matching chart setup' in service.status()['session']['detail']
+
+
+def test_incomplete_chart_context_blocks_ai_but_is_persisted(desk):
+    service, market, analyst, _clock = desk
+    original = market.snapshot
+    def incomplete(now):
+        snapshot = original(now)
+        snapshot['chart_analysis'].update(ready=False, issues=['Missing history'])
+        return snapshot
+    market.snapshot = incomplete
+    assert warm(desk)['position'] is None
+    assert analyst.calls == 0
+    assert service.status()['session']['chart_analysis']['issues'] == ['Missing history']
+
+
 @pytest.fixture
 def db():
     url = os.getenv("KIWIT_TEST_DATABASE_URL")
@@ -180,6 +206,8 @@ class Market:
             "spot_at": now.isoformat(),
             "spot": "55000",
             "candidates": [dict(CONTRACT, quote=self.quote(CONTRACT["symbol"], now))],
+            "chart_analysis": {"version": VERSION, "at": now.isoformat(), "ready": True, "issues": [],
+                               "patterns": [{"direction": "bullish", "strategy": "momentum", "at": now.isoformat()}]},
         }
 
 

@@ -1,8 +1,8 @@
 # kiwiT / TradingKIWI
 
-Research-only Indian-market strategy project. It currently downloads dated official NSE archives, prepares a survivorship-bias-free NIFTY 50/NIFTYBEES dataset, and runs the first trend-pullback-confirmation backtest.
+Indian-market research and experimental paper-trading platform. The Bank Nifty options desk combines read-only Groww data, multi-timeframe chart evidence, an OpenAI analyst and deterministic paper-execution controls. Earlier NSE archive research and cash-paper workflows remain separate.
 
-No broker integration or live order execution is included.
+Groww integration is read-only; live order execution is disabled. See [Bank Nifty paper desk](docs/banknifty-ai-paper.md) and [chart-analysis rules and limitations](docs/CHART_ANALYSIS.md). Pattern detections are not evidence of profitability, and no automatic model training is implemented.
 
 The new `kiwit` package is the production-oriented kernel. The older `tradingkiwi` package contains the first research data and backtesting implementation while migration proceeds.
 

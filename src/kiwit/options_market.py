@@ -5,9 +5,10 @@ from __future__ import annotations
 import csv
 import io
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
+from .chart_analysis import VERSION, analyse, history_context, parse_minutes
 from .intraday import IST, _quote_time
 
 
@@ -69,14 +70,35 @@ def executable_quote(payload: dict, now: datetime, *, entry: bool = True) -> dic
 
 
 class BankNiftyMarket:
-    def __init__(self, broker):
+    def __init__(self, broker, clock=None):
         self.broker = broker
+        self.clock = clock or (lambda: datetime.now(UTC))
 
     def quote(self, symbol, now, *, entry=True):
-        return executable_quote(self.broker.quote(symbol, segment="FNO"), now, entry=entry)
+        payload = self.broker.quote(symbol, segment="FNO")
+        # Validate against receipt-time clock, not a timestamp captured before network I/O.
+        return executable_quote(payload, self.clock(), entry=entry)
 
-    def snapshot(self, now):
-        history = completed_candles(self.broker.banknifty_candles(now - timedelta(minutes=25), now), now)
+    def snapshot(self, now, cached_context=None):
+        local = now.astimezone(IST)
+        start = local.replace(hour=9, minute=15, second=0, microsecond=0)
+        current = parse_minutes(self.broker.banknifty_candles(start, now), now)
+        context = cached_context
+        if not context or context.get("day") != str(local.date()) or context.get("version") != VERSION:
+            midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+            context = history_context(self.broker.banknifty_candles(midnight - timedelta(days=14), midnight), now)
+        analysis = analyse(current, context, now)
+        history = [
+            {
+                "at": b["at"],
+                "spot": str(b["close"]),
+                "open": str(b["open"]),
+                "high": str(b["high"]),
+                "low": str(b["low"]),
+            }
+            for b in current
+            if b["at"][:10] == str(local.date())
+        ][-20:]
         stamp = datetime.fromisoformat(history[-1]["at"])
         spot = positive(history[-1]["spot"])
         # Public instrument master: no broker credentials sent to the asset host.
@@ -98,8 +120,6 @@ class BankNiftyMarket:
                         candidates.append(dict(contract, quote=quote))
                 except (ValueError, ArithmeticError):
                     continue
-        if not candidates:
-            raise ValueError("No fresh liquid Bank Nifty option candidates")
         return {
             "at": now.isoformat(),
             "spot": str(spot),
@@ -107,6 +127,8 @@ class BankNiftyMarket:
             "candidates": candidates,
             "underlying_history": history,
             "underlying_source": "Groww completed 1-minute index candles",
+            "chart_analysis": analysis,
+            "chart_cache": context,
         }
 
 

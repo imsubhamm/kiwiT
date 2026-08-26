@@ -16,6 +16,7 @@ from decimal import Decimal as D
 from uuid import uuid4
 
 from .brokers.groww import BrokerApiError
+from .chart_analysis import entry_evidence
 from .intraday import IST
 from .options_ai import DAILY_BUDGET, MODEL, RESERVATION, TRIAL_BUDGET, OpenAIPaperAnalyst
 from .options_market import BankNiftyMarket
@@ -183,7 +184,7 @@ class BankNiftyService:
                 "last_exit": None,
                 "execution": "paper-only",
                 "model": MODEL,
-                "version": "banknifty-ai-v1",
+                "version": "banknifty-ai-v2-chart",
                 "last_tick": None,
             }
             self.store.save(connection, state)
@@ -216,7 +217,7 @@ class BankNiftyService:
             "available": self.enabled and self.market is not None and bool(os.getenv("OPENAI_API_KEY")),
             "execution": "paper-only",
             "model": MODEL,
-            "session": state,
+            "session": {k: v for k, v in state.items() if k != "chart_cache"} if state else None,
             "budget": {
                 "trial_limit_usd": str(TRIAL_BUDGET),
                 "daily_limit_usd": str(DAILY_BUDGET),
@@ -394,6 +395,9 @@ class BankNiftyService:
                     raise ValueError("Session P&L limit blocks entry")
                 if selected["expiry"] <= state["day"]:
                     raise ValueError("Expiry-day contracts not permitted")
+                evidence = entry_evidence(snapshot.get("chart_analysis"), selected["kind"], decision["strategy"], now)
+                if not evidence:
+                    raise ValueError("No fresh matching chart setup; paper entry blocked")
                 qty = quantity_for(state, selected, quote)
                 if not qty:
                     raise ValueError("Budget/liquidity too small for one lot within risk limits")
@@ -420,6 +424,7 @@ class BankNiftyService:
                         "position": state["position"],
                         "quote": quote,
                         "strategy": decision["strategy"],
+                        "chart_evidence": evidence,
                     },
                 )
             self.store.save(connection, state)
@@ -430,7 +435,11 @@ class BankNiftyService:
         if not state or state["state"] != "running" or not self.enabled or not entry_window(now):
             return {"state": state["state"] if state else "idle", "execution": "paper-only"}
         try:
-            snapshot = self.market.snapshot(now)
+            snapshot = (
+                self.market.snapshot(now, cached_context=state.get("chart_cache"))
+                if isinstance(self.market, BankNiftyMarket)
+                else self.market.snapshot(now)
+            )
             with self.store.locked() as connection:
                 current = self.store.latest(connection)
                 if current["day"] != state["day"] or current["state"] != "running":
@@ -442,6 +451,14 @@ class BankNiftyService:
                 elif not history or history[-1]["at"] != sample["at"]:
                     history.append(sample)
                 current["history"] = history[-20:]
+                cache = snapshot.pop("chart_cache", None)
+                analysis = snapshot.get("chart_analysis")
+                if cache and len(cache.get("daily", [])) >= 5 and not cache.get("partial_sessions"):
+                    current["chart_cache"] = cache
+                if analysis:
+                    current["chart_analysis"] = analysis
+                    # Chart bars stay in the session for rendering, not in the paid AI prompt.
+                    snapshot["chart_analysis"] = {k: v for k, v in analysis.items() if k != "chart_bars"}
                 current["detail"] = (
                     "Warming up: five fresh underlying observations required"
                     if len(history) < 5
@@ -476,6 +493,10 @@ class BankNiftyService:
                 ]
             if len(snapshot["history"]) < 5:
                 return {"state": "warming_up"}
+            if analysis and not analysis["ready"]:
+                raise ValueError("Chart context incomplete: " + "; ".join(analysis["issues"]))
+            if not snapshot["candidates"]:
+                raise ValueError("No fresh liquid Bank Nifty option candidates")
             times = [datetime.fromisoformat(item["at"]) for item in snapshot["history"][-5:]]
             if any(not 0 < (b - a).total_seconds() <= 120 for a, b in itertools.pairwise(times)):
                 raise ValueError("Underlying history has gaps")

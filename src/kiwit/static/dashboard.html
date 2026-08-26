@@ -37,6 +37,17 @@
           </form>
           <div class="run-summary" aria-live="polite"><strong id="bn-state">Checking AI desk…</strong><p id="bn-detail">Run is consent for today's simulated entries and exits, not live trading.</p><p id="bn-totals">No session loaded</p><p id="bn-budget">API spending controls not loaded</p></div>
           <p class="control-note">09:30–15:30 IST · new entries stop 15:00 · flatten from 15:15. AI checks at most every 5 minutes; independent exits checked every minute. Whole lots; one position; max 25% premium allocation and 1% capital at planned stop per entry; max 10 entries/day. No expiry-day trades. Your percentages apply to both session P&amp;L and option premium stops/targets. Stops are triggers, not guaranteed loss caps. Fees and slippage are illustrative.</p>
+          <section class="bn-chart-panel" aria-label="Bank Nifty chart evidence">
+            <h3>Market context &amp; pattern evidence</h3>
+            <p id="bn-chart-summary" aria-live="polite">Waiting for a paper session and fresh market data.</p>
+            <label for="bn-timeframe">Completed candles</label>
+            <select id="bn-timeframe"><option value="1m">1 minute — timing</option><option value="5m" selected>5 minutes — setups</option><option value="15m">15 minutes — context</option></select>
+            <div id="bn-chart" class="bn-chart" aria-label="Bank Nifty candlestick chart"></div>
+            <p class="hint">Green: rising candle · Red: falling candle · Dashed lines: previous-day high/low and opening range. Historical context is five complete observed sessions, not necessarily a calendar week.</p>
+            <div id="bn-context" class="signal-audit"></div>
+            <div id="bn-patterns" class="signal-audit"></div>
+            <p class="hint">Rule-based detections are experimental, not validated edges or profit probabilities. Index volume is unavailable; no VWAP or volume confirmation is inferred.</p>
+          </section>
           <div id="bn-decisions" class="signal-audit"></div><div id="bn-events" class="signal-audit"></div>
         </section>
         <section class="panel glass intraday reveal" id="signals">
