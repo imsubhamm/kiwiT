@@ -34,6 +34,8 @@ The hostname will be stable, but the current EC2 public IP can change after a st
 - Let's Encrypt certificate issued for `kiwit.tathyaforge.in`, initial expiry 24 November 2026.
 - TLS vhost installed and nginx configuration validated; localhost TLS verification succeeded (no certificate bypass).
 - Automatic renewal timer is enabled and nginx deploy hook installed.
-- Domain added to deployment host allowlist. Dashboard/email links deliberately retain the working Quick Tunnel until public HTTPS is verified, then must switch to the fixed URL.
-- Initial external TCP 443 probe timed out despite the local listener working. The owner has been asked to allow HTTPS/TCP 443 in the EC2 security group. Public login remains unverified until that network rule is in place.
+- Domain added to deployment host allowlist; dashboard/email links now target `https://kiwit.tathyaforge.in/dashboard`.
+- Owner enabled HTTPS/TCP 443 in the EC2 security group. Public HTTPS health returned 200, `/dashboard` redirected to `/login` (303), login returned 200, and HTTP redirected to HTTPS (308). Certificate verification succeeded without disabling TLS checks.
+- Renewal dry run succeeded; nginx renewal hook independently validated and reloaded the configuration successfully.
+- Local resolver initially retained a negative DNS response; subsequent unforced HTTPS requests resolved and succeeded. Some clients may need their negative DNS cache to expire.
 - Existing Quick Tunnel retained during cutover. The old bootstrap config is backed up at `/etc/nginx/kiwit-domain.bootstrap.conf`.
