@@ -213,3 +213,11 @@ def test_market_fetches_full_context_and_reuses_daily_cache(monkeypatch):
     ai_snapshot["candidates"] = first["candidates"] * 6
     ai_snapshot["previous_decisions"] = [{"summary": "x" * 600}] * 3
     assert len(request_body(ai_snapshot)) < 20000
+
+
+@pytest.mark.parametrize("close", [98, 102])
+def test_range_rejection_requires_close_inside_both_boundaries(close):
+    bars = parse_minutes(payload([[r[0], 100, 101, 99, 100] for r in rows("2026-08-26", 30)]), NOW)
+    bars[-1].update(open=100, high=103, low=97, close=close)
+    patterns = detect_patterns(bars, {"regime": "range", "atr14": 2, "ema9": 100}, None, None)
+    assert not any(p["name"] == "range_rejection" for p in patterns)

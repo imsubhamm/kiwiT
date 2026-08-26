@@ -263,7 +263,7 @@ def detect_patterns(bars, metrics, opening, previous):
         low,
         metrics["regime"] == "range"
         and last["low"] <= low + tolerance
-        and last["close"] > low
+        and low < last["close"] <= high
         and last["close"] > last["open"],
         last["low"],
     )
@@ -274,7 +274,7 @@ def detect_patterns(bars, metrics, opening, previous):
         high,
         metrics["regime"] == "range"
         and last["high"] >= high - tolerance
-        and last["close"] < high
+        and low <= last["close"] < high
         and last["close"] < last["open"],
         last["high"],
     )
