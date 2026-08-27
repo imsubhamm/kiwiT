@@ -51,6 +51,23 @@ def test_quotes_require_timestamp_and_executable_depth():
             executable_quote(dict(payload, **changes), NOW)
 
 
+def test_quote_uses_groww_market_depth_when_top_level_bid_offer_are_null():
+    payload = {
+        "bid_price": None,
+        "offer_price": None,
+        "bid_quantity": None,
+        "offer_quantity": None,
+        "last_trade_time": int(NOW.timestamp()),
+        "depth": {
+            "buy": [{"price": 100, "quantity": 60}],
+            "sell": [{"price": 101, "quantity": 90}],
+        },
+    }
+    result = executable_quote(payload, NOW)
+    assert result["bid"] == "100" and result["ask"] == "101"
+    assert result["bid_size"] == 60 and result["ask_size"] == 90
+
+
 def test_contracts_come_from_master_no_invented_lot_or_expiry():
     header = "exchange,segment,underlying_symbol,instrument_type,expiry_date,buy_allowed,sell_allowed,is_reserved,lot_size,freeze_quantity,trading_symbol,strike_price,tick_size\n"
     row = "NSE,FNO,BANKNIFTY,CE,2026-09-29,1,1,0,30,601,BANKNIFTY26SEP55000CE,55000,.05\n"

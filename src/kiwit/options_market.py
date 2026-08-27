@@ -55,14 +55,19 @@ def executable_quote(payload: dict, now: datetime, *, entry: bool = True) -> dic
     stamp = _quote_time(payload, now)
     if not 0 <= (now - stamp).total_seconds() <= 60:
         raise ValueError("Option quote stale or future-dated")
-    bid = positive(payload.get("bid_price"))
-    bid_size = int(payload.get("bid_quantity", 0))
+    depth = payload.get("depth") if isinstance(payload.get("depth"), dict) else {}
+    buys = depth.get("buy") if isinstance(depth.get("buy"), list) else []
+    sells = depth.get("sell") if isinstance(depth.get("sell"), list) else []
+    best_buy = buys[0] if buys and isinstance(buys[0], dict) else {}
+    best_sell = sells[0] if sells and isinstance(sells[0], dict) else {}
+    bid = positive(payload.get("bid_price") or best_buy.get("price"))
+    bid_size = int(payload.get("bid_quantity") or best_buy.get("quantity") or 0)
     if bid_size <= 0:
         raise ValueError("No bid liquidity")
     quote = {"stamp": stamp.isoformat(), "bid": str(bid), "bid_size": bid_size}
     if entry:
-        ask = positive(payload.get("offer_price"))
-        ask_size = int(payload.get("offer_quantity", 0))
+        ask = positive(payload.get("offer_price") or best_sell.get("price"))
+        ask_size = int(payload.get("offer_quantity") or best_sell.get("quantity") or 0)
         if ask < bid or (ask - bid) / ask > Decimal(".02") or ask_size <= 0:
             raise ValueError("Crossed, illiquid or wide-spread quote")
         quote.update(ask=str(ask), ask_size=ask_size)
