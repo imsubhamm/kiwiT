@@ -18,6 +18,19 @@ function setup() {
   return {nodes,calls,timers,data,context};
 }
 const settle = () => new Promise(resolve=>setImmediate(resolve));
+test('playbook plans, rejection reasons and evidence remain text-only and clearly experimental',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  data.playbooks=[{id:'test_v1',name:'<img onerror=bad()>'}];
+  data.paper_review=[{playbook_id:'test_v1',closed_trades:1,winning_trades:0,closed_net_pnl:'-40',partially_exited_trades:1,realized_pnl_including_partial:'-60'}];
+  data.session={state:'running',strategy_selection:{version:'selector-v1',at:new Date().toISOString(),evaluations:[{playbook_id:'test_v1',eligible:false,reasons:['5m/15m conflict']}],plans:[{id:'abc',playbook_id:'test_v1',symbol:'BANKNIFTY',quantity:30,expires_at:'2026-01-01T00:00:00Z',underlying_trigger:55000,underlying_invalidation:54900,underlying_max_chase:55050,max_fill:'101',planned_stop:'95',planned_target:'110'}]}};
+  timers[0]();await settle();
+  assert.match(nodes['bn-playbooks'].children[0].textContent,/5m\/15m conflict/);
+  assert.match(nodes['bn-entry-plans'].children[0].textContent,/EXPIRED/);
+  assert.match(nodes['bn-playbook-review'].children[0].textContent,/UNVALIDATED.*Closed trades 1/);
+  assert.match(nodes['bn-playbook-review'].children[0].textContent,/Partial exits still open 1/);
+  assert.equal(nodes['bn-playbook-review'].children[0].innerHTML,undefined);
+  assert.match(nodes['bn-playbook-review'].children[0].textContent,/<img/);
+});
 test('Run posts capital and limits once, with no extra approval dialog',async()=>{
   const {nodes,calls}=setup(); await settle();
   assert.equal(nodes['bn-run'].disabled,false);

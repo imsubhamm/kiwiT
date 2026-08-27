@@ -36,6 +36,7 @@ jobs:
       - run: pip install -e '.[api,production,workflow,research,dev]'
       - run: ruff check src/kiwit/api.py src/kiwit/brokers src/kiwit/observability.py src/kiwit/database.py src/kiwit/langgraph_workflow.py src/kiwit/paper_trading.py src/kiwit/intraday.py src/kiwit/paper_session.py src/kiwit/banknifty.py src/kiwit/options_ai.py src/kiwit/options_market.py src/kiwit/chart_analysis.py
       - run: pytest -q
+      - run: ruff check src/kiwit/playbooks.py src/kiwit/options_risk.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

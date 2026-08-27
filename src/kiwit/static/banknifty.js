@@ -83,6 +83,20 @@
       const data = await call('/api/v1/banknifty/status');
       const s = data.session;
       renderAnalysis(s?.chart_analysis);
+      const selection=s?.strategy_selection;
+      const stale=!selection || Date.now()-Date.parse(selection.at)>120000 || Date.parse(selection.at)>Date.now();
+      el('bn-selector-status').textContent=selection ? `${selection.version} · ${selection.at} · ${stale ? 'STALE — historical display only' : s.position ? 'Position monitoring — no additional entry' : selection.plans.length ? 'Eligible plans — AI may select or HOLD' : 'Waiting — no eligible setup'}` : 'No scan yet. Start a paper session during market hours.';
+      const names=Object.fromEntries((data.playbooks || []).map(p=>[p.id,p.name]));
+      lines('bn-playbooks',(selection?.evaluations || []).map(e=>`${names[e.playbook_id] || e.playbook_id}: ${e.eligible ? 'ELIGIBLE' : 'WAIT'} · ${e.reasons.join('; ')}`));
+      lines('bn-entry-plans',(selection?.plans || []).map(p=>`${names[p.playbook_id] || p.playbook_id} · ${p.symbol} × ${p.quantity} · ${Date.parse(p.expires_at)<=Date.now() ? 'EXPIRED' : 'Expires '+p.expires_at} · Trigger ${p.underlying_trigger} · Invalidation ${p.underlying_invalidation} · Chase bound ${p.underlying_max_chase} · Max premium fill ₹${p.max_fill} · Indicative premium stop/target ₹${p.planned_stop} / ₹${p.planned_target} · Plan ${p.id}`));
+      const active=s?.position?.entry_plan;
+      el('bn-active-plan').textContent=active ? `ACTIVE · ${names[active.playbook_id] || active.playbook_id} · ${s.position.contract.symbol} · Actual premium stop ₹${s.position.stop} · target ₹${s.position.target} · Time exit by ${s.position.exit_deadline} · Underlying invalidation ${active.underlying_invalidation}` : 'No open position with a selected playbook.';
+      const review=new Map((data.paper_review || []).map(r=>[r.playbook_id,r]));
+      const ids=[...new Set([...(data.playbooks || []).map(p=>p.id),...review.keys()])];
+      lines('bn-playbook-review',ids.length ? ids.map(id=>{
+        const r=review.get(id);
+        return `${names[id] || id} · UNVALIDATED · Closed trades ${r?.closed_trades || 0} · Winning trades ${r?.winning_trades || 0} · Closed net P&L ₹${r?.closed_net_pnl || '0'} · Partial exits still open ${r?.partially_exited_trades || 0} · Realized including partial ₹${r?.realized_pnl_including_partial || '0'}`;
+      }) : ['No playbook evidence available yet.']);
       if (data.available) {
         const legacy = el('run-form');
         if (legacy) legacy.hidden = true;
@@ -96,12 +110,13 @@
       el('bn-detail').textContent = s ? s.detail : data.available ? 'Ready. Set your limits and click Run.' : 'AI desk is not enabled on this server yet.';
       el('bn-totals').textContent = s ? `Paper cash ₹${s.cash} · P&L ₹${s.pnl}${s.valuation_fresh === false ? ' (STALE valuation)' : ''} · Entries ${s.entries} · ${s.position ? s.position.contract.symbol + ' × ' + s.position.quantity : 'No open position'} · Worker ${s.last_tick || 'not seen yet'}` : 'No paper session';
       el('bn-budget').textContent = data.budget ? `API budget used/reserved $${data.budget.used_or_reserved_usd} / $${data.budget.trial_limit_usd} trial · $${data.budget.daily_limit_usd}/day · conservative estimate, not invoice` : 'Budget unavailable';
-      lines('bn-decisions', (data.decisions || []).map(d => `${d.at} · ${d.state} · ${d.result?.decision ? d.result.decision.action + ': ' + d.result.decision.summary : 'No usable AI decision'}`));
+      lines('bn-decisions', (data.decisions || []).map(d => `${d.at} · ${d.state} · ${d.result?.decision ? d.result.decision.action + ': ' + d.result.decision.summary : 'No usable AI decision'}${d.result?.validation_error ? ' · BLOCKED: '+d.result.validation_error : ''}`));
       lines('bn-events', (data.events || []).slice(0, 15).map(e => `${e.at} · ${e.kind} · ${JSON.stringify(e.detail)}`));
     } catch (error) {
       el('bn-detail').textContent = 'AI desk unavailable: ' + error.message;
       el('bn-run').disabled = true;
       el('bn-chart-summary').textContent = 'Connection unavailable — displayed chart may be stale. No fresh analysis confirmed.';
+      el('bn-selector-status').textContent = 'Connection unavailable — displayed plans are historical, not actionable.';
       // Stop stays available after a polling failure when a session was loaded.
     } finally { syncing = false; }
   }

@@ -51,6 +51,17 @@ tax, pricing changes and manual API calls are outside this ledger. Review pricin
 before changing models. Keep provider auto-recharge off. All model decisions and
 input snapshots are in `banknifty_ai_calls`; session/fills in `banknifty_events`.
 
+## Versioned automatic playbooks
+
+The selector now supplies explicit versioned entry plans for opening-range breakout,
+breakout/retest, trend pullback and range reversal. The AI chooses a supplied plan
+or waits; execution independently rechecks the current underlying and option prices.
+New positions also carry underlying invalidation and time exits. The dashboard
+shows eligibility reasons, plans, rejected decisions and partial-fill-aware paper
+results per playbook. See [BANKNIFTY_PLAYBOOKS.md](BANKNIFTY_PLAYBOOKS.md) for the
+exact routing/entry rules and remaining historical-options validation requirements.
+No eligible plan while flat means no paid AI call. Existing exits still run.
+
 ## Risk and limitations
 
 - One long position, whole lots from the current Groww master, no expiry-day entries.

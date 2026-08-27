@@ -7,11 +7,12 @@ from uuid import uuid4
 
 import pytest
 
-from kiwit.banknifty import BankNiftyService, quantity_for
+from kiwit.banknifty import BankNiftyService
+from kiwit.chart_analysis import VERSION
 from kiwit.options_ai import parse_response, request_body
 from kiwit.options_market import completed_candles, contracts_from_csv, executable_quote
+from kiwit.options_risk import quantity_for
 from kiwit.paper_session import BoundDatabase
-from kiwit.chart_analysis import VERSION
 
 NOW = datetime(2026, 8, 26, 5, 0, tzinfo=UTC)
 CONTRACT = {
@@ -82,7 +83,14 @@ def response(decision=None, status="completed"):
                     {
                         "type": "output_text",
                         "text": json.dumps(
-                            decision or {"action": "HOLD", "symbol": "", "strategy": "no_trade", "summary": "Wait"}
+                            decision
+                            or {
+                                "action": "HOLD",
+                                "symbol": "",
+                                "strategy": "no_trade",
+                                "plan_id": "",
+                                "summary": "Wait",
+                            }
                         ),
                     }
                 ],
@@ -104,6 +112,23 @@ def test_ai_schema_and_budget_bounds():
         request_body({"huge": "x" * 21000})
     body = json.loads(request_body({"spot": "55000"}))
     assert body["store"] is False and body["max_output_tokens"] == 1000 and "tools" not in body
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"action": "BUY"},
+        {"plan_id": "invented"},
+        {"symbol": "unexpected"},
+        {"strategy": "momentum"},
+        {"action": "EXIT"},
+    ],
+)
+def test_ai_contract_rejects_inconsistent_action_and_plan(change):
+    d = {"action": "HOLD", "symbol": "", "plan_id": "", "strategy": "no_trade", "summary": "Wait"}
+    d.update(change)
+    with pytest.raises(ValueError):
+        parse_response(response(d))
 
 
 def test_candle_fallback_excludes_forming_bars_and_stale_prices():
@@ -148,26 +173,30 @@ def test_hallucinated_contract_is_blocked(desk):
 def test_buy_without_matching_chart_evidence_is_blocked(desk):
     service, market, _analyst, _clock = desk
     original = market.snapshot
+
     def missing_evidence(now):
         snapshot = original(now)
-        snapshot['chart_analysis']['patterns'] = []
+        snapshot["chart_analysis"]["patterns"] = []
         return snapshot
+
     market.snapshot = missing_evidence
-    assert warm(desk)['position'] is None
-    assert 'matching chart setup' in service.status()['session']['detail']
+    assert warm(desk)["position"] is None
+    assert "No eligible entry plan" in service.status()["session"]["detail"]
 
 
 def test_incomplete_chart_context_blocks_ai_but_is_persisted(desk):
     service, market, analyst, _clock = desk
     original = market.snapshot
+
     def incomplete(now):
         snapshot = original(now)
-        snapshot['chart_analysis'].update(ready=False, issues=['Missing history'])
+        snapshot["chart_analysis"].update(ready=False, issues=["Missing history"])
         return snapshot
+
     market.snapshot = incomplete
-    assert warm(desk)['position'] is None
+    assert warm(desk)["position"] is None
     assert analyst.calls == 0
-    assert service.status()['session']['chart_analysis']['issues'] == ['Missing history']
+    assert service.status()["session"]["chart_analysis"]["issues"] == ["Missing history"]
 
 
 @pytest.fixture
@@ -198,6 +227,11 @@ class Market:
             raise ValueError("stale")
         return quote(now, bid=self.bid, size=self.size)
 
+    def latest_underlying(self, now):
+        if self.fail:
+            raise ValueError("stale")
+        return {"at": now.isoformat(), "spot": "55000"}
+
     def snapshot(self, now):
         if self.fail:
             raise ValueError("stale")
@@ -206,8 +240,25 @@ class Market:
             "spot_at": now.isoformat(),
             "spot": "55000",
             "candidates": [dict(CONTRACT, quote=self.quote(CONTRACT["symbol"], now))],
-            "chart_analysis": {"version": VERSION, "at": now.isoformat(), "ready": True, "issues": [],
-                               "patterns": [{"direction": "bullish", "strategy": "momentum", "at": now.isoformat()}]},
+            "chart_analysis": {
+                "version": VERSION,
+                "at": now.isoformat(),
+                "ready": True,
+                "issues": [],
+                "timeframes": {"5m": {"regime": "uptrend", "atr14": 100}, "15m": {"regime": "uptrend"}},
+                "previous_calendar_week": {"coverage": {"status": "complete"}, "trend": "upward_bias"},
+                "patterns": [
+                    {
+                        "id": "opening_range_breakout_bullish",
+                        "name": "opening_range_breakout",
+                        "direction": "bullish",
+                        "strategy": "momentum",
+                        "at": now.isoformat(),
+                        "observed_close": 55000,
+                        "invalidation": 54950,
+                    }
+                ],
+            },
         }
 
 
@@ -224,7 +275,8 @@ class Analyst:
         return {
             "action": self.action,
             "symbol": CONTRACT["symbol"],
-            "strategy": "momentum",
+            "strategy": "momentum" if self.action == "BUY" else "no_trade",
+            "plan_id": snapshot["strategy_selection"]["plans"][0]["id"] if self.action == "BUY" else "",
             "summary": "Fixture only",
         }, {"input_tokens": 100, "output_tokens": 50, "budget_charge_usd": ".002"}
 
@@ -329,3 +381,101 @@ def test_budget_limits_reserve_before_network(desk):
     warm(desk)
     assert analyst.calls == 0
     assert service.status()["session"]["position"] is None
+
+
+@pytest.mark.parametrize("failure", ["unknown_plan", "price_moved", "underlying_reversed", "plan_expired"])
+def test_ai_buy_is_revalidated_after_inference_and_rejection_is_audited(desk, failure):
+    service, market, analyst, clock = desk
+    original = analyst.decide
+
+    def changed(snapshot):
+        result, usage = original(snapshot)
+        if failure == "unknown_plan":
+            result["plan_id"] = "invented"
+        elif failure == "price_moved":
+            market.quote = lambda symbol, now, entry=True: quote(now, bid="103", ask="104")
+        elif failure == "underlying_reversed":
+            market.latest_underlying = lambda now: {"at": now.isoformat(), "spot": "54900"}
+        else:
+            clock[0] += timedelta(seconds=91)
+        return result, usage
+
+    analyst.decide = changed
+    assert warm(desk)["position"] is None
+    status = service.status()
+    assert status["decisions"][0]["state"] == "rejected"
+    assert status["decisions"][0]["result"]["validation_error"]
+    assert any(e["kind"] == "blocked" and e["detail"].get("call_id") for e in status["events"])
+
+
+@pytest.mark.parametrize("reason", ["underlying_invalidation", "time_exit"])
+def test_playbook_exits_without_ai_and_keeps_plan_attribution(desk, reason):
+    service, market, analyst, clock = desk
+    state = warm(desk)
+    assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v1"
+    analyst.fail = True
+    if reason == "underlying_invalidation":
+        clock[0] += timedelta(minutes=1)
+        market.latest_underlying = lambda now: {"at": now.isoformat(), "spot": "54900"}
+    else:
+        clock[0] += timedelta(minutes=46)
+    service.run_once()
+    status = service.status()
+    assert status["session"]["position"] is None
+    event = next(e for e in status["events"] if e["kind"] == "paper_exit")
+    assert event["detail"]["reason"] == reason
+    assert event["detail"]["position_id"] == state["position"]["id"]
+    review = status["paper_review"][0]
+    assert review["closed_trades"] == 1 and review["partially_exited_trades"] == 0
+    assert D(review["closed_net_pnl"]) == D(event["detail"]["pnl"])
+
+
+def test_partial_exits_count_as_one_trade_only_when_flat(desk):
+    service, market, _analyst, clock = desk
+    state = warm(desk)
+    original_quantity = state["position"]["quantity"]
+    service.stop("test")
+    market.size = 30
+    clock[0] += timedelta(minutes=1)
+    service.run_once()
+    review = service.status()["paper_review"][0]
+    assert original_quantity > 30
+    assert review["closed_trades"] == 0 and review["partially_exited_trades"] == 1
+    assert D(review["closed_net_pnl"]) == 0
+    market.size = 600
+    clock[0] += timedelta(minutes=1)
+    service.run_once()
+    status = service.status()
+    review = status["paper_review"][0]
+    assert review["closed_trades"] == 1 and review["partially_exited_trades"] == 0
+    assert D(review["closed_net_pnl"]) == D(status["session"]["realized_pnl"])
+
+
+def test_underlying_outage_does_not_disable_premium_stop(desk):
+    service, market, _analyst, clock = desk
+    warm(desk)
+
+    def unavailable(now):
+        raise ValueError("Underlying unavailable")
+
+    market.latest_underlying = unavailable
+    market.bid = "90"
+    clock[0] += timedelta(minutes=1)
+    service.run_once()
+    assert service.status()["session"]["position"] is None
+
+
+def test_plan_generation_uses_receipt_clock_after_network_io(desk):
+    _service, market, _analyst, clock = desk
+    original = market.snapshot
+
+    def delayed(now):
+        snapshot = original(now)
+        snapshot["candidates"][0]["quote"]["stamp"] = (now + timedelta(seconds=1)).isoformat()
+        clock[0] += timedelta(seconds=2)
+        return snapshot
+
+    market.snapshot = delayed
+    state = warm(desk)
+    assert state["position"] is not None
+    assert state["position"]["entry_plan"]["created_at"] == clock[0].isoformat()

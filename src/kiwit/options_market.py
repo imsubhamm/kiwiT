@@ -79,6 +79,12 @@ class BankNiftyMarket:
         # Validate against receipt-time clock, not a timestamp captured before network I/O.
         return executable_quote(payload, self.clock(), entry=entry)
 
+    def latest_underlying(self, now):
+        bars = parse_minutes(self.broker.banknifty_candles(now - timedelta(minutes=5), now), now)
+        if not bars or not 0 <= (now - datetime.fromisoformat(bars[-1]["at"])).total_seconds() <= 120:
+            raise ValueError("Underlying recheck candles missing or stale")
+        return {"at": bars[-1]["at"], "spot": str(bars[-1]["close"])}
+
     def snapshot(self, now, cached_context=None):
         local = now.astimezone(IST)
         start = local.replace(hour=9, minute=15, second=0, microsecond=0)

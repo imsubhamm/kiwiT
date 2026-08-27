@@ -48,6 +48,20 @@
             <div id="bn-patterns" class="signal-audit"></div>
             <p class="hint">Rule-based detections are experimental, not validated edges or profit probabilities. Index volume is unavailable; no VWAP or volume confirmation is inferred.</p>
           </section>
+          <section class="bn-chart-panel" aria-label="Automatic strategy selection">
+            <h3>Strategy selector &amp; entry plans</h3>
+            <p id="bn-selector-status" aria-live="polite">Waiting for a strategy scan.</p>
+            <div id="bn-playbooks" class="signal-audit"></div>
+            <div id="bn-entry-plans" class="signal-audit"></div>
+            <p id="bn-active-plan" class="hint">No selected entry plan.</p>
+            <p class="hint">Experimental paper playbooks, not profitability-approved strategies. No eligible setup means wait—not a forced trade. The AI selects a plan; code rechecks its trigger, expiry, premium price and risk before a simulated fill.</p>
+          </section>
+          <section class="bn-chart-panel" aria-label="Paper playbook evidence">
+            <h3>Paper evidence by playbook</h3>
+            <p class="hint">Version-attributed paper exits since this selector release. Older unattributed history is not retroactively classified. Closed-trade net results include illustrative costs. Partial exits are not counted as completed trades. These are forward observations, not a historical options backtest, drawdown report or live approval.</p>
+            <div id="bn-playbook-review" class="signal-audit"></div>
+          </section>
+          <h3>AI decisions &amp; audit trail</h3>
           <div id="bn-decisions" class="signal-audit"></div><div id="bn-events" class="signal-audit"></div>
         </section>
         <section class="panel glass intraday reveal" id="signals">

@@ -10,8 +10,7 @@ import itertools
 import json
 import os
 from contextlib import contextmanager
-from datetime import UTC, datetime, time
-from decimal import ROUND_CEILING, ROUND_FLOOR
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal as D
 from uuid import uuid4
 
@@ -20,20 +19,12 @@ from .chart_analysis import entry_evidence
 from .intraday import IST
 from .options_ai import DAILY_BUDGET, MODEL, RESERVATION, TRIAL_BUDGET, OpenAIPaperAnalyst
 from .options_market import BankNiftyMarket
+from .options_risk import fees, fill_price
 from .paper_session import validate_limits
+from .playbooks import VERSION as SELECTOR_VERSION
+from .playbooks import catalogue, select_plans, underlying_exit, validate_plan
 
 DESK = "kiwit-banknifty-paper"
-FEE_RATE = D(".002")  # illustrative 20 bps per side + ₹20/order; not exact statutory fees
-
-
-def fees(notional):
-    return notional * FEE_RATE + 20
-
-
-def fill_price(quote, contract, buy):
-    tick = D(contract["tick"])
-    value = D(quote["ask" if buy else "bid"]) * (D("1.001") if buy else D(".999"))
-    return (value / tick).to_integral_value(rounding=ROUND_CEILING if buy else ROUND_FLOOR) * tick
 
 
 def fresh(quote, now):
@@ -48,21 +39,6 @@ def entry_window(now):
 def market_window(now):
     local = now.astimezone(IST)
     return local.weekday() < 5 and time(9, 30) <= local.time() < time(15, 30)
-
-
-def quantity_for(state, contract, quote):
-    fill = fill_price(quote, contract, True)
-    amount, cash, loss = D(state["amount"]), D(state["cash"]), D(state["loss_pct"]) / 100
-    # Whole lots, max 25% premium allocation, 1% initial capital at planned stop.
-    allocation = min(amount / 4, cash)
-    units = min(
-        int(max(D(0), allocation - 20) / (fill * (1 + FEE_RATE))),
-        int(max(D(0), amount * D(".01") - 40) / (fill * (loss + 2 * FEE_RATE))),
-        quote["ask_size"],
-        quote["bid_size"],
-        contract["freeze"] - 1,
-    )
-    return max(0, units // contract["lot"] * contract["lot"])
 
 
 class BankNiftyStore:
@@ -184,7 +160,7 @@ class BankNiftyService:
                 "last_exit": None,
                 "execution": "paper-only",
                 "model": MODEL,
-                "version": "banknifty-ai-v3-week",
+                "version": "banknifty-ai-v4-playbooks",
                 "last_tick": None,
             }
             self.store.save(connection, state)
@@ -213,10 +189,34 @@ class BankNiftyService:
             calls = connection.execute(
                 "SELECT created_at,state,result FROM banknifty_ai_calls ORDER BY created_at DESC LIMIT 10"
             ).fetchall()
+            review = connection.execute(
+                "WITH trades AS (SELECT detail->>'position_id' AS position_id, "
+                "detail->>'playbook_id' AS playbook_id, sum((detail->>'pnl')::numeric) AS pnl, "
+                "bool_or((detail->>'closed')::boolean) AS closed FROM banknifty_events "
+                "WHERE kind='paper_exit' AND detail ? 'position_id' "
+                "GROUP BY detail->>'position_id',detail->>'playbook_id') "
+                "SELECT playbook_id,count(*) FILTER(WHERE closed), "
+                "count(*) FILTER(WHERE closed AND pnl>0), "
+                "COALESCE(sum(pnl) FILTER(WHERE closed),0),sum(pnl),count(*) FILTER(WHERE NOT closed) "
+                "FROM trades GROUP BY playbook_id"
+            ).fetchall()
         return {
             "available": self.enabled and self.market is not None and bool(os.getenv("OPENAI_API_KEY")),
             "execution": "paper-only",
             "model": MODEL,
+            "selector_version": SELECTOR_VERSION,
+            "playbooks": catalogue(),
+            "paper_review": [
+                {
+                    "playbook_id": p,
+                    "closed_trades": n,
+                    "winning_trades": w,
+                    "closed_net_pnl": str(net),
+                    "realized_pnl_including_partial": str(total),
+                    "partially_exited_trades": partial,
+                }
+                for p, n, w, net, total, partial in review
+            ],
             "session": {k: v for k, v in state.items() if k != "chart_cache"} if state else None,
             "budget": {
                 "trial_limit_usd": str(TRIAL_BUDGET),
@@ -258,6 +258,9 @@ class BankNiftyService:
                 "reason": reason,
                 "pnl": str(proceeds - entry_cost),
                 "quote": quote,
+                "position_id": position["id"],
+                "playbook_id": position.get("entry_plan", {}).get("playbook_id", "legacy_unattributed"),
+                "closed": position["quantity"] == 0,
             },
         )
         if not position["quantity"]:
@@ -276,12 +279,18 @@ class BankNiftyService:
             initial = self.store.latest(connection)
         if not initial or initial["state"] == "completed":
             return initial
-        position, quote = initial["position"], None
+        position, quote, underlying = initial["position"], None, None
         if position and self.market:
             try:
                 quote = self.market.quote(position["contract"]["symbol"], self.clock(), entry=False)
             except (BrokerApiError, OSError, ValueError, ArithmeticError):
                 quote = None  # no invented price; persist stale valuation below
+            # Price-based exits remain available even if underlying data is unavailable.
+            if position.get("entry_plan") and fresh(quote, self.clock()):
+                try:
+                    underlying = self.market.latest_underlying(self.clock())
+                except (BrokerApiError, OSError, ValueError, ArithmeticError):
+                    underlying = None
         now = self.clock()
         with self.store.locked() as connection:
             state = self.store.latest(connection)
@@ -304,6 +313,7 @@ class BankNiftyService:
                     state["pnl"] = str(D(state["cash"]) + value - fees(value) - D(state["amount"]))
                     current["mark"] = str(price)
                     current["mark_at"] = quote["stamp"]
+                    current["underlying_check"] = underlying
                     pnl, amount = D(state["pnl"]), D(state["amount"])
                     if pnl <= -amount * D(state["loss_pct"]) / 100 or pnl >= amount * D(state["profit_pct"]) / 100:
                         state["state"] = "stopping"
@@ -317,6 +327,10 @@ class BankNiftyService:
                             if price <= D(current["stop"])
                             else "take_profit"
                             if price >= D(current["target"])
+                            else "underlying_invalidation"
+                            if underlying_exit(current, underlying, now)
+                            else "time_exit"
+                            if current.get("exit_deadline") and now >= datetime.fromisoformat(current["exit_deadline"])
                             else None
                         )
                     )
@@ -342,10 +356,12 @@ class BankNiftyService:
     def _apply(self, decision, snapshot, call_id):
         now = self.clock()
         selected = next((c for c in snapshot["candidates"] if c["symbol"] == decision["symbol"]), None)
-        quote = None
+        quote, underlying = None, None
         if decision["action"] in ("BUY", "EXIT"):
             if decision["action"] == "BUY" and selected is None:
                 raise ValueError("Model selected a contract outside its supplied universe")
+            if decision["action"] == "BUY":
+                underlying = self.market.latest_underlying(now)
             if decision["action"] == "EXIT" and (
                 not snapshot["position"] or snapshot["position"]["contract"]["symbol"] != decision["symbol"]
             ):
@@ -365,6 +381,7 @@ class BankNiftyService:
                 return
             self.store.event(connection, state, "ai_decision", {"call_id": str(call_id), **decision})
             state["detail"] = decision["summary"]
+            state["last_decision"] = {"at": now.isoformat(), **decision}
             if decision["action"] == "EXIT":
                 if (
                     state["position"]
@@ -398,9 +415,8 @@ class BankNiftyService:
                 evidence = entry_evidence(snapshot.get("chart_analysis"), selected["kind"], decision["strategy"], now)
                 if not evidence:
                     raise ValueError("No fresh matching chart setup; paper entry blocked")
-                qty = quantity_for(state, selected, quote)
-                if not qty:
-                    raise ValueError("Budget/liquidity too small for one lot within risk limits")
+                plan = validate_plan(decision, snapshot, state, quote, underlying, now)
+                qty = plan["quantity"]
                 fill = fill_price(quote, selected, True)
                 cost = fill * qty + fees(fill * qty)
                 state["cash"] = str(D(state["cash"]) - cost)
@@ -413,6 +429,9 @@ class BankNiftyService:
                     "stop": str(fill * (1 - D(state["loss_pct"]) / 100)),
                     "target": str(fill * (1 + D(state["profit_pct"]) / 100)),
                     "entered_at": now.isoformat(),
+                    "entry_plan": plan,
+                    "entry_underlying": underlying,
+                    "exit_deadline": (now + timedelta(minutes=plan["max_hold_minutes"])).isoformat(),
                 }
                 state["entries"] += 1
                 self.store.event(
@@ -434,12 +453,15 @@ class BankNiftyService:
         now = self.clock()
         if not state or state["state"] != "running" or not self.enabled or not entry_window(now):
             return {"state": state["state"] if state else "idle", "execution": "paper-only"}
+        call_id = None
         try:
             snapshot = (
                 self.market.snapshot(now, cached_context=state.get("chart_cache"))
                 if isinstance(self.market, BankNiftyMarket)
                 else self.market.snapshot(now)
             )
+            # Quotes may arrive after scan start; evaluate them against receipt time.
+            now = self.clock()
             with self.store.locked() as connection:
                 current = self.store.latest(connection)
                 if current["day"] != state["day"] or current["state"] != "running":
@@ -481,6 +503,13 @@ class BankNiftyService:
                     realized_pnl=current["realized_pnl"],
                     entries=current["entries"],
                 )
+                selection = select_plans(snapshot, current, now)
+                current["strategy_selection"] = selection
+                snapshot["strategy_selection"] = selection
+                if not selection["plans"] and not current["position"]:
+                    current["detail"] = "No eligible entry plan; waiting for a supported setup"
+                self.store.save(connection, current)
+                self.store.event(connection, current, "strategy_scan", selection)
                 recent = connection.execute(
                     "SELECT state,result->'decision' FROM banknifty_ai_calls WHERE trading_date=%s "
                     "AND result->'decision' IS NOT NULL ORDER BY created_at DESC LIMIT 3",
@@ -502,6 +531,8 @@ class BankNiftyService:
                 raise ValueError("Chart context incomplete: " + "; ".join(analysis["issues"]))
             if not snapshot["candidates"]:
                 raise ValueError("No fresh liquid Bank Nifty option candidates")
+            if not selection["plans"] and not snapshot["position"]:
+                return {"state": "waiting_for_setup", "ai_called": False}
             times = [datetime.fromisoformat(item["at"]) for item in snapshot["history"][-5:]]
             if any(not 0 < (b - a).total_seconds() <= 120 for a, b in itertools.pairwise(times)):
                 raise ValueError("Underlying history has gaps")
@@ -519,9 +550,18 @@ class BankNiftyService:
             with self.store.locked() as connection:
                 current = self.store.latest(connection)
                 detail = str(error) if type(error) is ValueError else "Market data or AI unavailable"
+                if call_id:
+                    connection.execute(
+                        "UPDATE banknifty_ai_calls SET state='rejected', "
+                        "result=jsonb_set(result,'{validation_error}',%s::jsonb) "
+                        "WHERE call_id=%s AND state='completed'",
+                        (json.dumps(detail), call_id),
+                    )
                 # Never log provider errors/bodies containing authorization material.
                 if current and current["state"] == "running":
                     current["detail"] = detail
                     self.store.save(connection, current)
-                    self.store.event(connection, current, "blocked", {"reason": detail})
+                    self.store.event(
+                        connection, current, "blocked", {"reason": detail, "call_id": str(call_id) if call_id else None}
+                    )
             return {"state": "blocked", "detail": detail}

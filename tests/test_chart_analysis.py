@@ -286,6 +286,27 @@ def test_market_fetches_full_context_and_reuses_daily_cache(monkeypatch):
     ai_snapshot["candidates"] = first["candidates"] * 6
     ai_snapshot["previous_decisions"] = [{"summary": "x" * 600}] * 3
     assert len(request_body(ai_snapshot)) < 20000
+    from kiwit.playbooks import select_plans
+
+    a = ai_snapshot["chart_analysis"]
+    a["timeframes"]["5m"].update(regime="uptrend", atr14=100)
+    a["timeframes"]["15m"]["regime"] = "uptrend"
+    a["patterns"] = [
+        {
+            "id": name + "_bullish",
+            "name": name,
+            "at": NOW.isoformat(),
+            "strategy": "momentum",
+            "direction": "bullish",
+            "observed_close": float(first["spot"]),
+            "invalidation": float(first["spot"]) - 50,
+        }
+        for name in ("opening_range_breakout", "breakout_retest", "ema_pullback")
+    ]
+    state = {"day": str(NOW.date()), "amount": "100000", "cash": "100000", "loss_pct": "5", "profit_pct": "10"}
+    ai_snapshot["strategy_selection"] = select_plans(ai_snapshot, state, NOW + timedelta(seconds=2))
+    assert len(ai_snapshot["strategy_selection"]["plans"]) == 3
+    assert len(request_body(ai_snapshot)) < 20000
 
 
 @pytest.mark.parametrize("close", [98, 102])
