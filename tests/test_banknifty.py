@@ -493,8 +493,12 @@ def test_completed_day_becomes_bounded_next_day_learning_context(desk):
     assert status["session"]["state"] == "completed"
     assert status["learning"]["recent_days"][0]["day"] == first["day"]
     assert status["learning"]["recent_days"][0]["summary"]["training"] is False
-    clock[0] += timedelta(days=1)
-    warm(desk)
+    next_day = clock[0] + timedelta(days=1)
+    clock[0] = next_day
+    service.start(100000, 5, 10, "test")
+    for i in range(5):
+        clock[0] = next_day + timedelta(minutes=i)
+        service.run_once()
     learning = analyst.last_snapshot["learning_context"]
     assert learning["mode"] == "bounded_in_context_evidence_not_model_training"
     assert len(learning["recent_days"]) == 1
