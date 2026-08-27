@@ -66,6 +66,11 @@ No eligible plan while flat means no paid AI call. Existing exits still run.
 
 - One long position, whole lots from the current Groww master, no expiry-day entries.
 - Entries 09:30–15:00 IST, flatten from 15:15, no fills at/after 15:30.
+- At or immediately after 15:30 IST the worker creates one immutable daily paper report,
+  stores it in PostgreSQL, displays it on the dashboard and attempts email delivery.
+  Delivery is idempotent and retried up to three worker ticks. If a fresh executable
+  quote was unavailable, the report explicitly marks the position unresolved instead
+  of inventing a closing fill.
 - Max 10 entries, 25% premium allocation, 1% initial capital at planned stop.
 - User percentages apply to session net P&L and individual premium stops/targets.
 - Ask-side buys, bid-side sells, 10bps adverse slippage rounded to tick, illustrative

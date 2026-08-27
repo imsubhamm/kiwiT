@@ -283,6 +283,15 @@ class Analyst:
         }, {"input_tokens": 100, "output_tokens": 50, "budget_charge_usd": ".002"}
 
 
+class Mailer:
+    def __init__(self):
+        self.reports = []
+
+    def send_daily_report(self, report, dashboard_url):
+        self.reports.append((report, dashboard_url))
+        return "sent", ""
+
+
 @pytest.fixture
 def desk(db, monkeypatch):
     monkeypatch.setenv("KIWIT_BANKNIFTY_AI_ENABLED", "true")
@@ -369,6 +378,42 @@ def test_eod_no_postmarket_fill(desk):
     service.run_once()
     assert service.status()["session"]["state"] == "stopping"
     assert service.status()["session"]["position"] is not None
+
+
+def test_330_report_is_durable_emailed_once_and_honest_about_unresolved_position(desk):
+    service, _market, _analyst, clock = desk
+    mailer = Mailer()
+    service.mailer = mailer
+    warm(desk)
+    clock[0] = NOW.replace(hour=10, minute=0)  # 15:30 IST
+    service.run_once()
+    report = service.status()["daily_reports"][0]
+    assert report["cutoff"] == "15:30 Asia/Kolkata"
+    assert report["execution"] == "paper-only"
+    assert report["reconciled_flat"] is False
+    assert report["open_position"]["symbol"] == CONTRACT["symbol"]
+    assert report["delivery"]["status"] == "sent"
+    assert report["delivery"]["attempts"] == 1
+    assert len(mailer.reports) == 1
+    clock[0] += timedelta(minutes=1)
+    service.run_once()
+    assert len(mailer.reports) == 1
+
+
+def test_330_report_for_completed_flat_session(desk):
+    service, _market, _analyst, clock = desk
+    service.mailer = Mailer()
+    warm(desk)
+    service.stop("test")
+    clock[0] += timedelta(minutes=1)
+    service.run_once()
+    assert service.status()["session"]["state"] == "completed"
+    clock[0] = NOW.replace(hour=10, minute=0)
+    service.run_once()
+    report = service.status()["daily_reports"][0]
+    assert report["reconciled_flat"] is True
+    assert report["session_state"] == "completed"
+    assert report["open_position"] is None
 
 
 def test_budget_limits_reserve_before_network(desk):

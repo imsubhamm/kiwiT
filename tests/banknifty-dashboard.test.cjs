@@ -42,6 +42,15 @@ test('daily learning is labelled as context rather than training or promotion',a
   assert.match(text,/COLLECTING.*Automatic promotion disabled/);
   assert.match(text,/Model training: no/);
 });
+test('3:30 report exposes reconciliation and email delivery',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  data.daily_reports=[{day:'2026-08-26',outcome:'profit',realized_pnl:'10',return_pct:'0.01',entries:1,
+    reconciled_flat:true,delivery:{status:'sent',attempts:1}}];
+  timers[0]();await settle();
+  const text=nodes['bn-daily-reports'].children[0].textContent;
+  assert.match(text,/RECONCILED FLAT/);
+  assert.match(text,/Email sent \(1 attempt\)/);
+});
 test('Run posts capital and limits once, with no extra approval dialog',async()=>{
   const {nodes,calls}=setup(); await settle();
   assert.equal(nodes['bn-run'].disabled,false);

@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from .brokers.groww import BrokerApiError
 from .chart_analysis import entry_evidence
-from .intraday import IST
+from .intraday import IST, SignalMailer
 from .options_ai import DAILY_BUDGET, MODEL, RESERVATION, TRIAL_BUDGET, OpenAIPaperAnalyst
 from .options_market import BankNiftyMarket
 from .options_risk import fees, fill_price
@@ -168,13 +168,71 @@ class BankNiftyStore:
             (state["day"], SELECTOR_VERSION, json.dumps(summary)),
         )
 
+    def daily_report(self, connection, state, now):
+        row = connection.execute(
+            "SELECT report,delivery_status,delivery_attempts,delivery_attempted_at,delivery_error "
+            "FROM banknifty_daily_reports WHERE trading_date=%s",
+            (state["day"],),
+        ).fetchone()
+        if row:
+            report = row[0]
+            report["delivery"] = {
+                "status": row[1],
+                "attempts": row[2],
+                "attempted_at": str(row[3]) if row[3] else None,
+                "error": row[4],
+            }
+            return report
+        counts = connection.execute(
+            "SELECT kind,count(*) FROM banknifty_events WHERE trading_date=%s GROUP BY kind", (state["day"],)
+        ).fetchall()
+        event_counts = {kind: count for kind, count in counts}
+        realized = D(state["realized_pnl"])
+        capital = D(state["amount"])
+        report = {
+            "version": "banknifty-daily-report-v1",
+            "day": state["day"],
+            "generated_at": now.isoformat(),
+            "cutoff": "15:30 Asia/Kolkata",
+            "execution": "paper-only",
+            "session_state": state["state"],
+            "reconciled_flat": state["position"] is None,
+            "capital": state["amount"],
+            "realized_pnl": state["realized_pnl"],
+            "mark_pnl": state["pnl"],
+            "return_pct": str(realized / capital * 100 if capital else D(0)),
+            "entries": state["entries"],
+            "loss_limit_pct": state["loss_pct"],
+            "profit_target_pct": state["profit_pct"],
+            "outcome": "profit" if realized > 0 else "loss" if realized < 0 else "flat",
+            "open_position": (
+                {
+                    "symbol": state["position"]["contract"]["symbol"],
+                    "quantity": state["position"]["quantity"],
+                    "last_mark": state["position"].get("mark"),
+                    "mark_at": state["position"].get("mark_at"),
+                }
+                if state["position"]
+                else None
+            ),
+            "event_counts": event_counts,
+        }
+        connection.execute(
+            "INSERT INTO banknifty_daily_reports(trading_date,generated_at,report) VALUES(%s,%s,%s::jsonb)",
+            (state["day"], now, json.dumps(report)),
+        )
+        self.event(connection, state, "daily_report_generated", {"version": report["version"]})
+        report["delivery"] = {"status": "pending", "attempts": 0, "attempted_at": None, "error": ""}
+        return report
+
 
 class BankNiftyService:
-    def __init__(self, database, broker, *, market=None, analyst=None, clock=None):
+    def __init__(self, database, broker, *, market=None, analyst=None, clock=None, mailer=None):
         self.store = BankNiftyStore(database)
         self.market = market or (BankNiftyMarket(broker) if broker else None)
         self.analyst = analyst or OpenAIPaperAnalyst()
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.mailer = mailer or SignalMailer()
 
     @property
     def enabled(self):
@@ -260,6 +318,11 @@ class BankNiftyService:
                 "FROM trades GROUP BY playbook_id"
             ).fetchall()
             learning = self.store.learning_context(connection, "9999-12-31")
+            reports = connection.execute(
+                "SELECT trading_date,generated_at,report,delivery_status,delivery_attempts,"
+                "delivery_attempted_at,delivery_error FROM banknifty_daily_reports "
+                "ORDER BY trading_date DESC LIMIT 10"
+            ).fetchall()
         return {
             "available": self.enabled and self.market is not None and bool(os.getenv("OPENAI_API_KEY")),
             "execution": "paper-only",
@@ -278,6 +341,20 @@ class BankNiftyService:
                 for p, n, w, net, total, partial in review
             ],
             "learning": learning,
+            "daily_reports": [
+                {
+                    **report,
+                    "day": str(day),
+                    "generated_at": str(generated),
+                    "delivery": {
+                        "status": delivery,
+                        "attempts": attempts,
+                        "attempted_at": str(attempted) if attempted else None,
+                        "error": error,
+                    },
+                }
+                for day, generated, report, delivery, attempts, attempted, error in reports
+            ],
             "session": {k: v for k, v in state.items() if k != "chart_cache"} if state else None,
             "budget": {
                 "trial_limit_usd": str(TRIAL_BUDGET),
@@ -288,6 +365,33 @@ class BankNiftyService:
             "events": [{"at": str(at), "kind": kind, "detail": detail} for at, kind, detail in events],
             "decisions": [{"at": str(at), "state": status, "result": result} for at, status, result in calls],
         }
+
+    def _process_daily_report(self, state, now):
+        local = now.astimezone(IST)
+        if not state or local.time() < time(15, 30) or state["day"] != str(local.date()):
+            return None
+        with self.store.locked() as connection:
+            current = self.store.latest(connection)
+            if not current or current["day"] != state["day"]:
+                return None
+            report = self.store.daily_report(connection, current, now)
+            delivery = report["delivery"]
+            should_send = delivery["status"] != "sent" and delivery["attempts"] < 3
+        if not should_send:
+            return report
+        status, error = self.mailer.send_daily_report(
+            report, os.getenv("KIWIT_DASHBOARD_URL", "https://kiwit.tathyaforge.in/dashboard")
+        )
+        with self.store.locked() as connection:
+            connection.execute(
+                "UPDATE banknifty_daily_reports SET delivery_status=%s,delivery_attempts=delivery_attempts+1,"
+                "delivery_attempted_at=%s,delivery_error=%s WHERE trading_date=%s AND delivery_status<>'sent'",
+                (status, now, error[:500], state["day"]),
+            )
+            current = self.store.latest(connection)
+            if current:
+                self.store.event(connection, current, "daily_report_delivery", {"status": status, "error": error[:200]})
+        return report
 
     def _close(self, connection, state, quote, reason, now):
         position = state["position"]
@@ -521,6 +625,7 @@ class BankNiftyService:
     def run_once(self):
         state = self._monitor()  # exits do not depend on model availability or remaining API credit
         now = self.clock()
+        self._process_daily_report(state, now)
         if not state or state["state"] != "running" or not self.enabled or not entry_window(now):
             return {"state": state["state"] if state else "idle", "execution": "paper-only"}
         call_id = None

@@ -102,6 +102,8 @@
       const learned=(learning?.playbook_evidence || []).map(x=>`${names[x.playbook_id] || x.playbook_id} · ${x.evidence_state.toUpperCase()} · Closed trades ${x.closed_trades} · Wins ${x.wins} · Mean return ${x.mean_return_pct}% · Net P&L ₹${x.net_pnl} · Automatic promotion disabled`);
       const days=(learning?.recent_days || []).map(x=>`${x.day} · P&L ₹${x.summary.realized_pnl} · Entries ${x.summary.entries} · ${x.summary.final_state} · Model training: ${x.summary.training ? 'yes' : 'no'}`);
       lines('bn-learning-days',learned.concat(days).length ? learned.concat(days) : ['Collecting paper outcomes. No completed day available yet.']);
+      const reports=(data.daily_reports || []).map(r=>`${r.day} · ${r.outcome.toUpperCase()} · Realized P&L ₹${r.realized_pnl} (${r.return_pct}%) · Entries ${r.entries} · ${r.reconciled_flat ? 'RECONCILED FLAT' : 'UNRESOLVED POSITION'} · Email ${r.delivery.status} (${r.delivery.attempts} attempt${r.delivery.attempts===1?'':'s'})`);
+      lines('bn-daily-reports',reports.length ? reports : ['Today’s report will be generated automatically at 15:30 IST after Run.']);
       if (data.available) {
         const legacy = el('run-form');
         if (legacy) legacy.hidden = true;

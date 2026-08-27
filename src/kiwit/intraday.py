@@ -64,7 +64,8 @@ class IntradaySettings:
     @classmethod
     def from_env(cls) -> IntradaySettings:
         symbols = tuple(
-            symbol.strip().upper() for symbol in os.getenv("KIWIT_INTRADAY_SYMBOLS", "NIFTYBEES").split(",")
+            symbol.strip().upper()
+            for symbol in os.getenv("KIWIT_INTRADAY_SYMBOLS", "NIFTYBEES").split(",")
             if symbol.strip()
         )
         return cls(
@@ -118,13 +119,55 @@ class SignalMailer:
         except (OSError, smtplib.SMTPException) as error:
             return "failed", f"{type(error).__name__}: email delivery failed"
 
+    def send_daily_report(self, report: dict[str, Any], dashboard_url: str) -> tuple[str, str]:
+        """Deliver a deterministic paper-session report without exposing credentials."""
+        if not self.configured:
+            return "not_configured", "SMTP environment variables are not configured"
+        message = EmailMessage()
+        message["Subject"] = f"kiwiT 3:30 PM paper report · {report['day']} · P&L ₹{report['realized_pnl']}"
+        message["From"] = self.sender
+        message["To"] = self.recipient
+        counts = report.get("event_counts", {})
+        open_position = report.get("open_position")
+        position_text = (
+            f"UNRESOLVED: {open_position['symbol']} × {open_position['quantity']}"
+            if open_position
+            else "Flat and reconciled"
+        )
+        message.set_content(
+            "kiwiT Bank Nifty options paper report\n\n"
+            f"Trading day: {report['day']}\nCutoff: {report['cutoff']}\n"
+            f"Final session state: {report['session_state']}\nReconciliation: {position_text}\n"
+            f"Starting paper capital: ₹{report['capital']}\n"
+            f"Realized P&L: ₹{report['realized_pnl']} ({report['return_pct']}%)\n"
+            f"Entries: {report['entries']}\nPaper exits: {counts.get('paper_exit', 0)}\n"
+            f"AI decisions: {counts.get('ai_decision', 0)}\nBlocked actions: {counts.get('blocked', 0)}\n"
+            f"Result: {report['outcome']}\n\n"
+            f"Full audit report: {dashboard_url}#banknifty\n\n"
+            "This report is for simulated paper trading. No live broker order was placed."
+        )
+        try:
+            client_type = smtplib.SMTP_SSL if self.implicit_tls else smtplib.SMTP
+            with client_type(self.host, self.port, timeout=10) as client:
+                if not self.implicit_tls:
+                    client.starttls()
+                if self.username:
+                    client.login(self.username, self.password)
+                client.send_message(message)
+            return "sent", ""
+        except (OSError, smtplib.SMTPException) as error:
+            return "failed", f"{type(error).__name__}: email delivery failed"
+
 
 class IntradayService(PaperSessionMixin):
     """Persistent, human-approved paper workflow. It has no live-order code path."""
 
     def __init__(
-        self, database: PostgresDatabase, broker: GrowwBrokerClient | None,
-        settings: IntradaySettings | None = None, mailer: SignalMailer | None = None,
+        self,
+        database: PostgresDatabase,
+        broker: GrowwBrokerClient | None,
+        settings: IntradaySettings | None = None,
+        mailer: SignalMailer | None = None,
     ) -> None:
         self.database = database
         self.broker = broker
@@ -132,7 +175,12 @@ class IntradayService(PaperSessionMixin):
         self.mailer = mailer or SignalMailer()
 
     def _audit(
-        self, connection: Any, event_type: str, actor: str, details: dict[str, Any], signal_id: UUID | None = None,
+        self,
+        connection: Any,
+        event_type: str,
+        actor: str,
+        details: dict[str, Any],
+        signal_id: UUID | None = None,
     ) -> None:
         connection.execute(
             "INSERT INTO intraday_audit_events(event_id,signal_id,account_id,event_type,actor,event_at,details) "
@@ -146,7 +194,13 @@ class IntradayService(PaperSessionMixin):
         payload = self.broker.quote(symbol)
         last = _decimal(payload.get("last_price") or payload.get("ltp") or payload.get("lastPrice"))
         bid = _decimal(payload.get("bid_price") or payload.get("bid") or payload.get("best_bid_price"), last)
-        ask = _decimal(payload.get("offer_price") or payload.get("ask_price") or payload.get("ask") or payload.get("best_ask_price"), last)
+        ask = _decimal(
+            payload.get("offer_price")
+            or payload.get("ask_price")
+            or payload.get("ask")
+            or payload.get("best_ask_price"),
+            last,
+        )
         observed_at = _quote_time(payload, now)
         if not 0 <= (now - observed_at).total_seconds() <= FRESHNESS_SECONDS:
             raise ValueError("Groww quote is stale or future-dated")
@@ -176,16 +230,30 @@ class IntradayService(PaperSessionMixin):
         for symbol in self.settings.symbols:
             row = by_symbol.get(symbol)
             age = int((now - row[1]).total_seconds()) if row else None
-            instruments.append({
-                "symbol": symbol, "observed_at": row[1].isoformat() if row else None,
-                "last_price": str(row[3]) if row else None, "source": row[4] if row else None,
-                "age_seconds": age, "fresh": age is not None and 0 <= age <= FRESHNESS_SECONDS,
-            })
+            instruments.append(
+                {
+                    "symbol": symbol,
+                    "observed_at": row[1].isoformat() if row else None,
+                    "last_price": str(row[3]) if row else None,
+                    "source": row[4] if row else None,
+                    "age_seconds": age,
+                    "fresh": age is not None and 0 <= age <= FRESHNESS_SECONDS,
+                }
+            )
         return {
-            "market_window": self._window_state(now), "freshness_limit_seconds": FRESHNESS_SECONDS,
+            "market_window": self._window_state(now),
+            "freshness_limit_seconds": FRESHNESS_SECONDS,
             "instruments": instruments,
-            "worker": ({"state": worker[0], "started_at": worker[1].isoformat(),
-                        "completed_at": worker[2].isoformat() if worker[2] else None, "detail": worker[3]} if worker else None),
+            "worker": (
+                {
+                    "state": worker[0],
+                    "started_at": worker[1].isoformat(),
+                    "completed_at": worker[2].isoformat() if worker[2] else None,
+                    "detail": worker[3],
+                }
+                if worker
+                else None
+            ),
         }
 
     @staticmethod
@@ -202,29 +270,37 @@ class IntradayService(PaperSessionMixin):
     def _create_signal(self, symbol: str, now: datetime) -> UUID | None:
         with self.database.transaction() as connection:
             session = self._active_session(connection)
-            if self.settings.account_id == 'kiwit-paper-auto' and not session:
+            if self.settings.account_id == "kiwit-paper-auto" and not session:
                 return None  # this account trades only under explicit day-scoped Run consent
-            if not session and connection.execute('SELECT 1 FROM paper_sessions WHERE account_id=%s AND trading_date=%s',
-                                                 (self.settings.account_id,now.astimezone(IST).date())).fetchone():
+            if (
+                not session
+                and connection.execute(
+                    "SELECT 1 FROM paper_sessions WHERE account_id=%s AND trading_date=%s",
+                    (self.settings.account_id, now.astimezone(IST).date()),
+                ).fetchone()
+            ):
                 return None  # completing a run must not fall back into the manual observer
-            if session and (session[5] == 'stopping' or session[1] != now.astimezone(IST).date()):
+            if session and (session[5] == "stopping" or session[1] != now.astimezone(IST).date()):
                 return None
             if now.astimezone(IST).time() >= ENTRY_CUTOFF:
                 return None
-            if session and connection.execute(
-                "SELECT 1 FROM intraday_signals WHERE session_id=%s AND symbol=%s "
-                "AND (status IN ('pending','entered') OR exit_filled_at>%s) LIMIT 1",
-                (session[0],symbol,now-timedelta(minutes=5)),
-            ).fetchone():
+            if (
+                session
+                and connection.execute(
+                    "SELECT 1 FROM intraday_signals WHERE session_id=%s AND symbol=%s "
+                    "AND (status IN ('pending','entered') OR exit_filled_at>%s) LIMIT 1",
+                    (session[0], symbol, now - timedelta(minutes=5)),
+                ).fetchone()
+            ):
                 return None
             rows = connection.execute(
                 "SELECT observed_at,last_price FROM intraday_quotes WHERE symbol=%s AND exchange='NSE' "
                 "AND observed_at>=%s AND observed_at<=%s ORDER BY observed_at DESC LIMIT 30",
-                (symbol, datetime.combine(now.astimezone(IST).date(), time(9,30), IST), now),
+                (symbol, datetime.combine(now.astimezone(IST).date(), time(9, 30), IST), now),
             ).fetchall()
             if len(rows) < 20 or (now - rows[0][0]).total_seconds() > FRESHNESS_SECONDS:
                 return None
-            if any((rows[i][0]-rows[i+1][0]).total_seconds() > 120 for i in range(19)):
+            if any((rows[i][0] - rows[i + 1][0]).total_seconds() > 120 for i in range(19)):
                 return None
             prices = [Decimal(row[1]) for row in reversed(rows)]
             current = prices[-1]
@@ -242,7 +318,8 @@ class IntradayService(PaperSessionMixin):
             else:
                 return None
             account = connection.execute(
-                "SELECT cash_balance FROM paper_accounts WHERE account_id=%s FOR UPDATE", (self.settings.account_id,),
+                "SELECT cash_balance FROM paper_accounts WHERE account_id=%s FOR UPDATE",
+                (self.settings.account_id,),
             ).fetchone()
             if not account:
                 raise RuntimeError("paper account does not exist")
@@ -257,8 +334,11 @@ class IntradayService(PaperSessionMixin):
             stop = current * (Decimal(1) - self.settings.stop_fraction)
             target = current * (Decimal(1) + self.settings.target_fraction)
             rationale = {
-                "fast_sma": str(fast), "slow_sma": str(slow), "rsi2": str(rsi2),
-                "stop_fraction": str(self.settings.stop_fraction), "target_fraction": str(self.settings.target_fraction),
+                "fast_sma": str(fast),
+                "slow_sma": str(slow),
+                "rsi2": str(rsi2),
+                "stop_fraction": str(self.settings.stop_fraction),
+                "target_fraction": str(self.settings.target_fraction),
                 "paper_only": True,
                 "experimental": True,
                 "session_id": str(session[0]) if session else None,
@@ -268,8 +348,23 @@ class IntradayService(PaperSessionMixin):
                 "signal_at,expires_at,entry_price,stop_price,target_price,quantity,rationale,status,session_id) "
                 "VALUES(%s,%s,%s,%s,%s,%s,%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb,'pending',%s) "
                 "ON CONFLICT DO NOTHING RETURNING signal_id",
-                (signal_id, self.settings.account_id, STRATEGY_ID, STRATEGY_VERSION, symbol, regime, pattern, now, expires,
-                 current, stop, target, quantity, json.dumps(rationale), session[0] if session else None),
+                (
+                    signal_id,
+                    self.settings.account_id,
+                    STRATEGY_ID,
+                    STRATEGY_VERSION,
+                    symbol,
+                    regime,
+                    pattern,
+                    now,
+                    expires,
+                    current,
+                    stop,
+                    target,
+                    quantity,
+                    json.dumps(rationale),
+                    session[0] if session else None,
+                ),
             ).fetchone()
             if not inserted:
                 return None
@@ -284,7 +379,14 @@ class IntradayService(PaperSessionMixin):
             connection.execute(
                 "INSERT INTO notification_deliveries(delivery_id,signal_id,channel,recipient,status,attempted_at,error_message) "
                 "VALUES(%s,%s,'email',%s,%s,%s,%s)",
-                (uuid4(), signal_id, self.mailer.recipient or "not-configured", delivery_status, datetime.now(UTC), error),
+                (
+                    uuid4(),
+                    signal_id,
+                    self.mailer.recipient or "not-configured",
+                    delivery_status,
+                    datetime.now(UTC),
+                    error,
+                ),
             )
             self._audit(connection, "notification_attempted", "kiwit-worker", {"status": delivery_status}, signal_id)
         return signal_id
@@ -294,14 +396,35 @@ class IntradayService(PaperSessionMixin):
             row = connection.execute(
                 "SELECT signal_id,symbol,exchange,regime,pattern,side,signal_at,expires_at,entry_price,stop_price,target_price,"
                 "quantity,status,reviewed_by,reviewed_at,entry_fill_price,entry_filled_at,exit_fill_price,exit_filled_at,"
-                "exit_reason,realized_pnl,rationale FROM intraday_signals WHERE signal_id=%s", (signal_id,),
+                "exit_reason,realized_pnl,rationale FROM intraday_signals WHERE signal_id=%s",
+                (signal_id,),
             ).fetchone()
         if not row:
             raise KeyError(str(signal_id))
-        keys = ("signal_id", "symbol", "exchange", "regime", "pattern", "side", "signal_at", "expires_at",
-                "entry_price", "stop_price", "target_price", "quantity", "status", "reviewed_by", "reviewed_at",
-                "entry_fill_price", "entry_filled_at", "exit_fill_price", "exit_filled_at", "exit_reason",
-                "realized_pnl", "rationale")
+        keys = (
+            "signal_id",
+            "symbol",
+            "exchange",
+            "regime",
+            "pattern",
+            "side",
+            "signal_at",
+            "expires_at",
+            "entry_price",
+            "stop_price",
+            "target_price",
+            "quantity",
+            "status",
+            "reviewed_by",
+            "reviewed_at",
+            "entry_fill_price",
+            "entry_filled_at",
+            "exit_fill_price",
+            "exit_filled_at",
+            "exit_reason",
+            "realized_pnl",
+            "rationale",
+        )
         data = dict(zip(keys, row, strict=True))
         for key, value in tuple(data.items()):
             if isinstance(value, (datetime, UUID)):
@@ -318,11 +441,13 @@ class IntradayService(PaperSessionMixin):
             ).fetchall()
             deliveries = connection.execute(
                 "SELECT n.status,count(*) FROM notification_deliveries n JOIN intraday_signals s USING(signal_id) "
-                "WHERE s.account_id=%s GROUP BY n.status", (self.settings.account_id,),
+                "WHERE s.account_id=%s GROUP BY n.status",
+                (self.settings.account_id,),
             ).fetchall()
             audit_rows = connection.execute(
                 "SELECT event_id,signal_id,event_type,actor,event_at,details FROM intraday_audit_events "
-                "WHERE account_id=%s ORDER BY event_at DESC LIMIT 100", (self.settings.account_id,),
+                "WHERE account_id=%s ORDER BY event_at DESC LIMIT 100",
+                (self.settings.account_id,),
             ).fetchall()
             reconciliation = connection.execute(
                 "SELECT trading_date,state,open_positions,pending_signals,entries,exits,realized_pnl,reconciled_at "
@@ -331,26 +456,50 @@ class IntradayService(PaperSessionMixin):
             ).fetchall()
         signals = [self.get_signal(row[0]) for row in ids]
         return {
-            "execution": "paper-only", "signals": signals,
-            "counts": {status: sum(1 for signal in signals if signal["status"] == status)
-                       for status in ("pending", "entered", "exited", "rejected", "expired", "blocked")},
+            "execution": "paper-only",
+            "signals": signals,
+            "counts": {
+                status: sum(1 for signal in signals if signal["status"] == status)
+                for status in ("pending", "entered", "exited", "rejected", "expired", "blocked")
+            },
             "notifications": {row[0]: row[1] for row in deliveries},
             "audit": [
-                {"event_id": str(row[0]), "signal_id": str(row[1]) if row[1] else None, "event_type": row[2],
-                 "actor": row[3], "event_at": row[4].isoformat(), "details": row[5]}
+                {
+                    "event_id": str(row[0]),
+                    "signal_id": str(row[1]) if row[1] else None,
+                    "event_type": row[2],
+                    "actor": row[3],
+                    "event_at": row[4].isoformat(),
+                    "details": row[5],
+                }
                 for row in audit_rows
             ],
             "reconciliations": [
-                {"trading_date": str(row[0]), "state": row[1], "open_positions": row[2],
-                 "pending_signals": row[3], "entries": row[4], "exits": row[5],
-                 "realized_pnl": str(row[6]), "reconciled_at": row[7].isoformat()}
+                {
+                    "trading_date": str(row[0]),
+                    "state": row[1],
+                    "open_positions": row[2],
+                    "pending_signals": row[3],
+                    "entries": row[4],
+                    "exits": row[5],
+                    "realized_pnl": str(row[6]),
+                    "reconciled_at": row[7].isoformat(),
+                }
                 for row in reconciliation
             ],
         }
 
     @serialized
-    def review(self, signal_id: UUID, approved: bool, reviewer: str, reason: str, now: datetime | None = None,
-               *, session_id: UUID | None = None) -> dict[str, Any]:
+    def review(
+        self,
+        signal_id: UUID,
+        approved: bool,
+        reviewer: str,
+        reason: str,
+        now: datetime | None = None,
+        *,
+        session_id: UUID | None = None,
+    ) -> dict[str, Any]:
         now = now or datetime.now(UTC)
         with self.database.transaction() as connection:
             signal = connection.execute(
@@ -362,13 +511,16 @@ class IntradayService(PaperSessionMixin):
             if signal[4] != "pending":
                 raise ValueError(f"signal is already {signal[4]}")
             if now >= signal[1]:
-                connection.execute("UPDATE intraday_signals SET status='expired',updated_at=%s WHERE signal_id=%s", (now, signal_id))
+                connection.execute(
+                    "UPDATE intraday_signals SET status='expired',updated_at=%s WHERE signal_id=%s", (now, signal_id)
+                )
                 self._audit(connection, "signal_expired", "kiwit-worker", {}, signal_id)
                 raise ValueError("signal expired; wait for a fresh setup")
             if not approved:
                 connection.execute(
                     "UPDATE intraday_signals SET status='rejected',reviewed_by=%s,reviewed_at=%s,review_reason=%s,updated_at=%s "
-                    "WHERE signal_id=%s", (reviewer, now, reason, now, signal_id),
+                    "WHERE signal_id=%s",
+                    (reviewer, now, reason, now, signal_id),
                 )
                 self._audit(connection, "signal_rejected", reviewer, {"reason": reason}, signal_id)
                 return {"signal_id": str(signal_id), "status": "rejected", "execution": "paper-only"}
@@ -389,12 +541,17 @@ class IntradayService(PaperSessionMixin):
                 raise ValueError("latest quote is stale; approval blocked")
             fill = Decimal(quote[1]) * Decimal("1.0005")
             account = connection.execute(
-                "SELECT cash_balance,status FROM paper_accounts WHERE account_id=%s FOR UPDATE", (self.settings.account_id,),
+                "SELECT cash_balance,status FROM paper_accounts WHERE account_id=%s FOR UPDATE",
+                (self.settings.account_id,),
             ).fetchone()
             if not account:
-                raise ValueError('paper account is unavailable')
+                raise ValueError("paper account is unavailable")
             terms = self.session_entry_terms(connection, signal_id, session_id, fill, now, account[0])
-            quantity, stop_fraction, target_fraction = terms or (signal[3], self.settings.stop_fraction, self.settings.target_fraction)
+            quantity, stop_fraction, target_fraction = terms or (
+                signal[3],
+                self.settings.stop_fraction,
+                self.settings.target_fraction,
+            )
             stop = fill * (1 - stop_fraction)
             target = fill * (1 + target_fraction)
             turnover = fill * quantity
@@ -403,13 +560,15 @@ class IntradayService(PaperSessionMixin):
                 raise ValueError("paper account is unavailable or has insufficient cash")
             instrument_id = connection.execute(
                 "SELECT instrument_id FROM instruments WHERE exchange='NSE' AND symbol=%s AND series='EQ' "
-                "ORDER BY valid_from DESC LIMIT 1", (signal[0],),
+                "ORDER BY valid_from DESC LIMIT 1",
+                (signal[0],),
             ).fetchone()
             if not instrument_id:
                 instrument_id = uuid4()
                 connection.execute(
                     "INSERT INTO instruments(instrument_id,exchange,symbol,series,lot_size,tick_size,valid_from) "
-                    "VALUES(%s,'NSE',%s,'EQ',1,0.05,'2000-01-01')", (instrument_id, signal[0]),
+                    "VALUES(%s,'NSE',%s,'EQ',1,0.05,'2000-01-01')",
+                    (instrument_id, signal[0]),
                 )
             else:
                 instrument_id = instrument_id[0]
@@ -430,12 +589,29 @@ class IntradayService(PaperSessionMixin):
                 (reviewer, now, reason, fill, now, stop, target, quantity, now, signal_id),
             )
             self._daily_trade(connection, now, turnover, fees=fee, realized=-fee)
-            self._audit(connection, "paper_entry_filled", reviewer, {"price": str(fill), "quantity": quantity,
-                        "entry_cost": str(fee), "session_id": str(session_id) if session_id else None}, signal_id)
+            self._audit(
+                connection,
+                "paper_entry_filled",
+                reviewer,
+                {
+                    "price": str(fill),
+                    "quantity": quantity,
+                    "entry_cost": str(fee),
+                    "session_id": str(session_id) if session_id else None,
+                },
+                signal_id,
+            )
         return self.get_signal(signal_id)
 
-    def _daily_trade(self, connection: Any, now: datetime, turnover: Decimal,
-                     *, fees: Decimal = Decimal(0), realized: Decimal = Decimal(0)) -> None:
+    def _daily_trade(
+        self,
+        connection: Any,
+        now: datetime,
+        turnover: Decimal,
+        *,
+        fees: Decimal = Decimal(0),
+        realized: Decimal = Decimal(0),
+    ) -> None:
         account = connection.execute(
             "SELECT cash_balance+COALESCE((SELECT sum(quantity*average_price) FROM paper_positions "
             "WHERE account_id=%s),0) FROM paper_accounts WHERE account_id=%s",
@@ -447,7 +623,15 @@ class IntradayService(PaperSessionMixin):
             "turnover=paper_daily_ledger.turnover+EXCLUDED.turnover,trade_count=paper_daily_ledger.trade_count+1,"
             "fees=paper_daily_ledger.fees+EXCLUDED.fees,realized_pnl=paper_daily_ledger.realized_pnl+EXCLUDED.realized_pnl,"
             "updated_at=EXCLUDED.updated_at",
-            (self.settings.account_id, now.astimezone(IST).date(), account[0]-realized, turnover, now, fees, realized),
+            (
+                self.settings.account_id,
+                now.astimezone(IST).date(),
+                account[0] - realized,
+                turnover,
+                now,
+                fees,
+                realized,
+            ),
         )
 
     @serialized
@@ -467,11 +651,14 @@ class IntradayService(PaperSessionMixin):
                 if not quote or not 0 <= (now - quote[0]).total_seconds() <= FRESHNESS_SECONDS:
                     continue
                 local = now.astimezone(IST)
-                if local.weekday() >= 5 or not time(9,30) <= local.time() < time(15,15):
+                if local.weekday() >= 5 or not time(9, 30) <= local.time() < time(15, 15):
                     continue  # never fabricate a post-market fill
-                reason = force_reason or ("stop_loss" if quote[1] <= stop else "take_profit" if quote[1] >= target else (
-                    "end_of_day" if local.time() >= FLATTEN_TIME else None
-                )
+                reason = force_reason or (
+                    "stop_loss"
+                    if quote[1] <= stop
+                    else "take_profit"
+                    if quote[1] >= target
+                    else ("end_of_day" if local.time() >= FLATTEN_TIME else None)
                 )
                 if reason is None:
                     continue
@@ -482,7 +669,8 @@ class IntradayService(PaperSessionMixin):
                 pnl = (fill - entry) * quantity - fee - entry_fee
                 instrument_id = connection.execute(
                     "SELECT instrument_id FROM instruments WHERE exchange='NSE' AND symbol=%s AND series='EQ' "
-                    "ORDER BY valid_from DESC LIMIT 1", (symbol,),
+                    "ORDER BY valid_from DESC LIMIT 1",
+                    (symbol,),
                 ).fetchone()[0]
                 connection.execute(
                     "UPDATE paper_positions SET quantity=quantity-%s,average_price=CASE WHEN quantity-%s=0 THEN 0 ELSE average_price END,"
@@ -491,16 +679,27 @@ class IntradayService(PaperSessionMixin):
                 )
                 connection.execute(
                     "UPDATE paper_accounts SET cash_balance=cash_balance+%s,realized_pnl=realized_pnl+%s,updated_at=%s "
-                    "WHERE account_id=%s", (turnover - fee, pnl, now, self.settings.account_id),
+                    "WHERE account_id=%s",
+                    (turnover - fee, pnl, now, self.settings.account_id),
                 )
                 connection.execute(
                     "UPDATE intraday_signals SET status='exited',exit_fill_price=%s,exit_filled_at=%s,exit_reason=%s,"
-                    "realized_pnl=%s,updated_at=%s WHERE signal_id=%s", (fill, now, reason, pnl, now, signal_id),
+                    "realized_pnl=%s,updated_at=%s WHERE signal_id=%s",
+                    (fill, now, reason, pnl, now, signal_id),
                 )
-                self._daily_trade(connection, now, turnover, fees=fee, realized=pnl+entry_fee)
-                self._audit(connection, "paper_exit_filled", "kiwit-worker", {
-                    "price": str(fill), "quantity": quantity, "reason": reason, "realized_pnl": str(pnl),
-                }, signal_id)
+                self._daily_trade(connection, now, turnover, fees=fee, realized=pnl + entry_fee)
+                self._audit(
+                    connection,
+                    "paper_exit_filled",
+                    "kiwit-worker",
+                    {
+                        "price": str(fill),
+                        "quantity": quantity,
+                        "reason": reason,
+                        "realized_pnl": str(pnl),
+                    },
+                    signal_id,
+                )
                 exits += 1
             connection.execute(
                 "UPDATE intraday_signals SET status='expired',updated_at=%s WHERE status='pending' AND expires_at<=%s",
@@ -535,7 +734,8 @@ class IntradayService(PaperSessionMixin):
         run_id = uuid4()
         with self.database.transaction() as connection:
             connection.execute(
-                "INSERT INTO intraday_worker_runs(run_id,started_at,state) VALUES(%s,%s,'running')", (run_id, now),
+                "INSERT INTO intraday_worker_runs(run_id,started_at,state) VALUES(%s,%s,'running')",
+                (run_id, now),
             )
         ingested = created = exits = 0
         state, detail = "completed", ""
@@ -550,9 +750,12 @@ class IntradayService(PaperSessionMixin):
                         self.ingest_quote(symbol, now)
                         ingested += 1
                     except Exception as error:  # noqa: BLE001 - keep exits available when one feed fails
-                        explanation = ('Groww session approval required' if 'approval' in str(error).lower()
-                                       else 'market data unavailable or stale')
-                        errors.append(f'{symbol}: {type(error).__name__}: {explanation}')
+                        explanation = (
+                            "Groww session approval required"
+                            if "approval" in str(error).lower()
+                            else "market data unavailable or stale"
+                        )
+                        errors.append(f"{symbol}: {type(error).__name__}: {explanation}")
                 exits = self.monitor_exits(now)
                 self.session_tick(now)
                 if window == "entry_window" and now.astimezone(IST).time() < ENTRY_CUTOFF:
@@ -561,7 +764,7 @@ class IntradayService(PaperSessionMixin):
                 if window == "reconciliation_window":
                     self.reconcile(now)
                 if errors:
-                    state, detail = 'data_unavailable', '; '.join(errors)
+                    state, detail = "data_unavailable", "; ".join(errors)
             else:
                 state, detail = "outside_window", "Runs weekdays from 09:30 to 15:45 IST"
         except Exception as error:  # noqa: BLE001 - worker must persist every unexpected run failure
@@ -569,7 +772,14 @@ class IntradayService(PaperSessionMixin):
         with self.database.transaction() as connection:
             connection.execute(
                 "UPDATE intraday_worker_runs SET completed_at=%s,state=%s,quotes_ingested=%s,signals_created=%s,"
-                "exits_created=%s,detail=%s WHERE run_id=%s", (datetime.now(UTC), state, ingested, created, exits, detail, run_id),
+                "exits_created=%s,detail=%s WHERE run_id=%s",
+                (datetime.now(UTC), state, ingested, created, exits, detail, run_id),
             )
-        return {"run_id": str(run_id), "state": state, "quotes_ingested": ingested,
-                "signals_created": created, "exits_created": exits, "detail": detail}
+        return {
+            "run_id": str(run_id),
+            "state": state,
+            "quotes_ingested": ingested,
+            "signals_created": created,
+            "exits_created": exits,
+            "detail": detail,
+        }
