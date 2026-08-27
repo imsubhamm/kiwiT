@@ -97,6 +97,11 @@
         const r=review.get(id);
         return `${names[id] || id} · UNVALIDATED · Closed trades ${r?.closed_trades || 0} · Winning trades ${r?.winning_trades || 0} · Closed net P&L ₹${r?.closed_net_pnl || '0'} · Partial exits still open ${r?.partially_exited_trades || 0} · Realized including partial ₹${r?.realized_pnl_including_partial || '0'}`;
       }) : ['No playbook evidence available yet.']);
+      const learning=data.learning;
+      el('bn-learning-status').textContent=learning ? `${learning.version} · ${learning.mode} · ${learning.limits}` : 'No finalized learning evidence loaded.';
+      const learned=(learning?.playbook_evidence || []).map(x=>`${names[x.playbook_id] || x.playbook_id} · ${x.evidence_state.toUpperCase()} · Closed trades ${x.closed_trades} · Wins ${x.wins} · Mean return ${x.mean_return_pct}% · Net P&L ₹${x.net_pnl} · Automatic promotion disabled`);
+      const days=(learning?.recent_days || []).map(x=>`${x.day} · P&L ₹${x.summary.realized_pnl} · Entries ${x.summary.entries} · ${x.summary.final_state} · Model training: ${x.summary.training ? 'yes' : 'no'}`);
+      lines('bn-learning-days',learned.concat(days).length ? learned.concat(days) : ['Collecting paper outcomes. No completed day available yet.']);
       if (data.available) {
         const legacy = el('run-form');
         if (legacy) legacy.hidden = true;

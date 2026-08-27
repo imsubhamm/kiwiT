@@ -305,6 +305,34 @@ def test_market_fetches_full_context_and_reuses_daily_cache(monkeypatch):
     ]
     state = {"day": str(NOW.date()), "amount": "100000", "cash": "100000", "loss_pct": "5", "profit_pct": "10"}
     ai_snapshot["strategy_selection"] = select_plans(ai_snapshot, state, NOW + timedelta(seconds=2))
+    ai_snapshot["learning_context"] = {
+        "version": "banknifty-learning-v1",
+        "mode": "bounded_in_context_evidence_not_model_training",
+        "playbook_evidence": [
+            {
+                "playbook_id": "x",
+                "closed_trades": 19,
+                "wins": 10,
+                "net_pnl": "100",
+                "mean_return_pct": ".1",
+                "evidence_state": "collecting",
+                "promotion_eligible": False,
+            }
+        ],
+        "recent_days": [
+            {
+                "day": f"2026-08-{i:02d}",
+                "summary": {
+                    "realized_pnl": "10",
+                    "entries": 1,
+                    "event_counts": {"paper_entry": 1, "paper_exit": 1},
+                    "training": False,
+                },
+            }
+            for i in range(10, 20)
+        ],
+        "limits": "No automatic promotion",
+    }
     assert len(ai_snapshot["strategy_selection"]["plans"]) == 3
     assert len(request_body(ai_snapshot)) < 20000
 

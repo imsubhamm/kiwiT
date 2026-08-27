@@ -267,9 +267,11 @@ class Analyst:
         self.calls = 0
         self.fail = False
         self.action = "BUY"
+        self.last_snapshot = None
 
     def decide(self, snapshot):
         self.calls += 1
+        self.last_snapshot = snapshot
         if self.fail:
             raise TimeoutError()
         return {
@@ -479,3 +481,23 @@ def test_plan_generation_uses_receipt_clock_after_network_io(desk):
     state = warm(desk)
     assert state["position"] is not None
     assert state["position"]["entry_plan"]["created_at"] == clock[0].isoformat()
+
+
+def test_completed_day_becomes_bounded_next_day_learning_context(desk):
+    service, _market, analyst, clock = desk
+    first = warm(desk)
+    service.stop("test")
+    clock[0] += timedelta(minutes=1)
+    service.run_once()
+    status = service.status()
+    assert status["session"]["state"] == "completed"
+    assert status["learning"]["recent_days"][0]["day"] == first["day"]
+    assert status["learning"]["recent_days"][0]["summary"]["training"] is False
+    clock[0] += timedelta(days=1)
+    warm(desk)
+    learning = analyst.last_snapshot["learning_context"]
+    assert learning["mode"] == "bounded_in_context_evidence_not_model_training"
+    assert len(learning["recent_days"]) == 1
+    assert learning["playbook_evidence"][0]["closed_trades"] == 1
+    assert learning["playbook_evidence"][0]["evidence_state"] == "collecting"
+    assert learning["playbook_evidence"][0]["promotion_eligible"] is False

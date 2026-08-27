@@ -102,3 +102,17 @@ results before interpreting performance. No self-training or automatic live prom
 
 Official API contract reference used for this implementation:
 https://developers.openai.com/api/docs/guides/structured-outputs
+
+## Daily learning v1
+
+When a session finishes flat, an idempotent daily record stores its version,
+realized P&L, entries and audit-event counts. The next day receives at most ten
+prior daily summaries plus closed-trade results grouped by playbook. Under 20
+trades is `collecting`; 20 or more is only `exploratory`. It may break a tie between
+otherwise eligible plans but cannot override current evidence or risk. It does not
+change model weights, code or limits, and cannot promote itself or enable live orders.
+This is controlled retrieval-based learning, not training.
+
+The design follows official OpenAI guidance to make changes incrementally and
+re-evaluate them on representative evidence rather than assuming improvement:
+https://developers.openai.com/api/docs/guides/latest-model

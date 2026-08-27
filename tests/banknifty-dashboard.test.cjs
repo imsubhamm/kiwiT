@@ -31,6 +31,17 @@ test('playbook plans, rejection reasons and evidence remain text-only and clearl
   assert.equal(nodes['bn-playbook-review'].children[0].innerHTML,undefined);
   assert.match(nodes['bn-playbook-review'].children[0].textContent,/<img/);
 });
+test('daily learning is labelled as context rather than training or promotion',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  data.learning={version:'learning-v1',mode:'bounded_in_context_evidence_not_model_training',limits:'no automatic promotion',
+    playbook_evidence:[{playbook_id:'p',evidence_state:'collecting',closed_trades:2,wins:1,mean_return_pct:'0.1',net_pnl:'10'}],
+    recent_days:[{day:'2026-08-26',summary:{realized_pnl:'10',entries:1,final_state:'reconciled_flat',training:false}}]};
+  timers[0]();await settle();
+  assert.match(nodes['bn-learning-status'].textContent,/not_model_training.*no automatic promotion/);
+  const text=nodes['bn-learning-days'].children.map(n=>n.textContent).join('\n');
+  assert.match(text,/COLLECTING.*Automatic promotion disabled/);
+  assert.match(text,/Model training: no/);
+});
 test('Run posts capital and limits once, with no extra approval dialog',async()=>{
   const {nodes,calls}=setup(); await settle();
   assert.equal(nodes['bn-run'].disabled,false);

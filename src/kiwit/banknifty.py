@@ -112,6 +112,62 @@ class BankNiftyStore:
                 ),
             )
 
+    def learning_context(self, connection, before_day):
+        rows = connection.execute(
+            "WITH trades AS (SELECT detail->>'position_id' position_id,detail->>'playbook_id' playbook_id,"
+            "sum((detail->>'pnl')::numeric) pnl,max((detail->>'capital')::numeric) capital,"
+            "bool_or((detail->>'closed')::boolean) closed FROM banknifty_events WHERE kind='paper_exit' "
+            "AND trading_date<%s AND detail ? 'position_id' AND detail ? 'capital' "
+            "GROUP BY detail->>'position_id',detail->>'playbook_id') "
+            "SELECT playbook_id,count(*),count(*) FILTER(WHERE pnl>0),sum(pnl),"
+            "avg(pnl/nullif(capital,0)*100) FROM trades WHERE closed GROUP BY playbook_id",
+            (before_day,),
+        ).fetchall()
+        days = connection.execute(
+            "SELECT trading_date,summary FROM banknifty_learning_days WHERE trading_date<%s "
+            "ORDER BY trading_date DESC LIMIT 10",
+            (before_day,),
+        ).fetchall()
+        return {
+            "version": "banknifty-learning-v1",
+            "mode": "bounded_in_context_evidence_not_model_training",
+            "playbook_evidence": [
+                {
+                    "playbook_id": p,
+                    "closed_trades": n,
+                    "wins": w,
+                    "net_pnl": str(pnl),
+                    "mean_return_pct": str(mean),
+                    "evidence_state": "exploratory" if n >= 20 else "collecting",
+                    "promotion_eligible": False,
+                }
+                for p, n, w, pnl, mean in rows
+            ],
+            "recent_days": [{"day": str(day), "summary": summary} for day, summary in days],
+            "limits": "Never edits playbooks, risk limits, code or live permissions; no automatic promotion",
+        }
+
+    def finalize_learning(self, connection, state):
+        if state["state"] != "completed" or state["position"]:
+            return
+        counts = connection.execute(
+            "SELECT kind,count(*) FROM banknifty_events WHERE trading_date=%s GROUP BY kind", (state["day"],)
+        ).fetchall()
+        summary = {
+            "session_version": state["version"],
+            "selector_version": SELECTOR_VERSION,
+            "realized_pnl": state["realized_pnl"],
+            "entries": state["entries"],
+            "event_counts": {kind: count for kind, count in counts},
+            "final_state": "reconciled_flat",
+            "training": False,
+        }
+        connection.execute(
+            "INSERT INTO banknifty_learning_days(trading_date,selector_version,summary) "
+            "VALUES(%s,%s,%s::jsonb) ON CONFLICT(trading_date) DO NOTHING",
+            (state["day"], SELECTOR_VERSION, json.dumps(summary)),
+        )
+
 
 class BankNiftyService:
     def __init__(self, database, broker, *, market=None, analyst=None, clock=None):
@@ -130,6 +186,8 @@ class BankNiftyService:
         day = str(now.astimezone(IST).date())
         with self.store.locked() as connection:
             old = self.store.latest(connection)
+            if old and old["state"] == "completed" and not old["position"]:
+                self.store.finalize_learning(connection, old)
             if old and old["day"] == day:
                 if tuple(map(D, (old["amount"], old["loss_pct"], old["profit_pct"]))) != (amount, loss, profit):
                     raise ValueError("Today’s paper limits are immutable")
@@ -177,6 +235,7 @@ class BankNiftyService:
                 )
                 self.store.save(connection, state)
                 self.store.event(connection, state, "stop_requested", {"actor": actor})
+                self.store.finalize_learning(connection, state)
             return state or {"state": "idle"}
 
     def status(self):
@@ -200,6 +259,7 @@ class BankNiftyService:
                 "COALESCE(sum(pnl) FILTER(WHERE closed),0),sum(pnl),count(*) FILTER(WHERE NOT closed) "
                 "FROM trades GROUP BY playbook_id"
             ).fetchall()
+            learning = self.learning_context(connection, "9999-12-31")
         return {
             "available": self.enabled and self.market is not None and bool(os.getenv("OPENAI_API_KEY")),
             "execution": "paper-only",
@@ -217,6 +277,7 @@ class BankNiftyService:
                 }
                 for p, n, w, net, total, partial in review
             ],
+            "learning": learning,
             "session": {k: v for k, v in state.items() if k != "chart_cache"} if state else None,
             "budget": {
                 "trial_limit_usd": str(TRIAL_BUDGET),
@@ -263,6 +324,7 @@ class BankNiftyService:
                 "price": str(price),
                 "reason": reason,
                 "pnl": str(proceeds - entry_cost),
+                "capital": state["amount"],
                 "quote": quote,
                 "position_id": position["id"],
                 "playbook_id": position.get("entry_plan", {}).get("playbook_id", "legacy_unattributed"),
@@ -357,6 +419,7 @@ class BankNiftyService:
                     state["state"] = "completed"
                     state["detail"] = "Session complete; reconciled flat"
             self.store.save(connection, state)
+            self.store.finalize_learning(connection, state)
             return state
 
     def _apply(self, decision, snapshot, call_id):
@@ -510,6 +573,7 @@ class BankNiftyService:
                     realized_pnl=current["realized_pnl"],
                     entries=current["entries"],
                 )
+                snapshot["learning_context"] = self.store.learning_context(connection, current["day"])
                 selection = select_plans(snapshot, current, now)
                 current["strategy_selection"] = selection
                 snapshot["strategy_selection"] = selection

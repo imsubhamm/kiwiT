@@ -35,6 +35,10 @@ Compare the 15m regime and prior-session context; explain conflicts and prefer H
 when unclear. Do not claim visual inspection, volume/VWAP confirmation, unseen news,
 automatic training, or certain profits. Index volume is unavailable. EXIT/HOLD may
 be chosen without an entry pattern. The supplied percentages are limits, not promises.
+learning_context contains only finalized prior-day paper outcomes. Treat fewer than
+20 closed trades per playbook as collecting evidence, never as an edge. Exploratory
+evidence may break a tie between otherwise eligible plans but cannot override the
+current setup, price, freshness, liquidity or risk. It is not model training.
 Give a concise decision summary, not hidden reasoning. Code controls all sizing,
 stop/target and risk limits. These are unvalidated experiments, not approved strategies."""
 SCHEMA = {
