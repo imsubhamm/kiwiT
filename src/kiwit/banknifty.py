@@ -259,7 +259,7 @@ class BankNiftyService:
                 "COALESCE(sum(pnl) FILTER(WHERE closed),0),sum(pnl),count(*) FILTER(WHERE NOT closed) "
                 "FROM trades GROUP BY playbook_id"
             ).fetchall()
-            learning = self.learning_context(connection, "9999-12-31")
+            learning = self.store.learning_context(connection, "9999-12-31")
         return {
             "available": self.enabled and self.market is not None and bool(os.getenv("OPENAI_API_KEY")),
             "execution": "paper-only",
