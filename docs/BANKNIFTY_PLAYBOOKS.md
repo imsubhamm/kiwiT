@@ -77,6 +77,9 @@ P&L and whether the position is fully closed. Status exposes the current selecti
 catalogue, rejection explanations and all-time version-attributed paper results.
 
 Evidence aggregates partial fills per position before counting closed trades/winners.
+Entry cost remaining is persisted and apportioned on partial exits; the final fill
+uses the exact remainder so event P&L reconciles to session realized P&L without
+repeated per-unit division drift.
 Closed net P&L and realized P&L including partial exits are displayed separately.
 Old events without attribution are not silently assigned to a playbook. The review
 is not mark-to-market drawdown, a historical backtest or promotion approval.

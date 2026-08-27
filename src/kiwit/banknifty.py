@@ -242,9 +242,15 @@ class BankNiftyService:
         if price <= 0:
             return False
         proceeds = price * qty - fees(price * qty)
-        entry_cost = D(position["entry_cost_per_unit"]) * qty
+        remaining_cost = D(
+            position.get("entry_cost_remaining", D(position["entry_cost_per_unit"]) * position["quantity"])
+        )
+        entry_cost = (
+            remaining_cost if qty == position["quantity"] else remaining_cost * D(qty) / D(position["quantity"])
+        )
         state["cash"] = str(D(state["cash"]) + proceeds)
         state["realized_pnl"] = str(D(state["realized_pnl"]) + proceeds - entry_cost)
+        position["entry_cost_remaining"] = str(remaining_cost - entry_cost)
         position["quantity"] -= qty
         position["last_exit_quote"] = quote["stamp"]
         self.store.event(
@@ -426,6 +432,7 @@ class BankNiftyService:
                     "quantity": qty,
                     "entry": str(fill),
                     "entry_cost_per_unit": str(cost / qty),
+                    "entry_cost_remaining": str(cost),
                     "stop": str(fill * (1 - D(state["loss_pct"]) / 100)),
                     "target": str(fill * (1 + D(state["profit_pct"]) / 100)),
                     "entered_at": now.isoformat(),
