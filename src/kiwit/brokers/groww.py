@@ -150,7 +150,7 @@ class GrowwBrokerClient:
         except urllib.error.HTTPError as error:
             # A newly approved session/subscription can invalidate an access token
             # that was generated earlier. Refresh once, only for read-only calls.
-            if error.code == 403 and method == "GET" and self.settings.api_secret:
+            if error.code in (401, 403) and method == "GET" and self.settings.api_secret:
                 self._clear_token_cache()
                 try:
                     status_code, body = self._send(method, url)
