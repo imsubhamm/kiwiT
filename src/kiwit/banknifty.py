@@ -249,6 +249,26 @@ class BankNiftyService:
             if old and old["day"] == day:
                 if tuple(map(D, (old["amount"], old["loss_pct"], old["profit_pct"]))) != (amount, loss, profit):
                     raise ValueError("Today’s paper limits are immutable")
+                resumable = (
+                    old["state"] == "completed"
+                    and old["position"] is None
+                    and old["entries"] == 0
+                    and D(old["realized_pnl"]) == 0
+                    and int(old.get("resumes", 0)) == 0
+                    and now.astimezone(IST).time() < time(15)
+                )
+                if resumable:
+                    old["state"] = "running"
+                    old["resumes"] = 1
+                    old["detail"] = "Audited same-day resume approved; original limits preserved"
+                    old["last_tick"] = None
+                    self.store.save(connection, old)
+                    self.store.event(
+                        connection,
+                        old,
+                        "run_resumed",
+                        {"actor": actor, "reason": "completed flat with zero entries", "limits_preserved": True},
+                    )
                 return old
             if old and (old["position"] or old["state"] != "completed"):
                 raise ValueError("Previous Bank Nifty session must be reconciled first")
@@ -267,6 +287,7 @@ class BankNiftyService:
                 "realized_pnl": "0",
                 "pnl": "0",
                 "entries": 0,
+                "resumes": 0,
                 "position": None,
                 "state": "running",
                 "actor": actor,

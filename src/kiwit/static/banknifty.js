@@ -110,8 +110,11 @@
       }
       const today = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Kolkata', year:'numeric', month:'2-digit', day:'2-digit'}).format(new Date());
       const usedToday = Boolean(s && s.day === today);
-      el('bn-run').disabled = busy || !data.available || usedToday || Boolean(s && s.state !== 'completed');
-      el('bn-run').title = usedToday ? 'Today’s Run already exists; limits cannot be reset.' : '';
+      const resumeBefore=new Date().toLocaleTimeString('en-GB',{timeZone:'Asia/Kolkata',hour12:false})<'15:00:00';
+      const resumable=Boolean(usedToday && s.state==='completed' && !s.position && s.entries===0 && Number(s.realized_pnl)===0 && Number(s.resumes||0)===0 && resumeBefore);
+      el('bn-run').disabled = busy || !data.available || (usedToday && !resumable) || Boolean(s && s.state !== 'completed');
+      el('bn-run').textContent = resumable ? 'Resume today’s paper Run' : 'Run Bank Nifty paper AI';
+      el('bn-run').title = usedToday && !resumable ? 'Today’s Run already exists; limits cannot be reset.' : resumable ? 'One audited resume; original limits must match.' : '';
       el('bn-stop').disabled = busy || !s || s.state === 'completed';
       el('bn-state').textContent = `${data.model || 'AI'} · ${s ? s.state : 'Not running'} · PAPER ONLY`;
       el('bn-detail').textContent = s ? s.detail : data.available ? 'Ready. Set your limits and click Run.' : 'AI desk is not enabled on this server yet.';

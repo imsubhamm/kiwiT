@@ -60,6 +60,14 @@ test('Run posts capital and limits once, with no extra approval dialog',async()=
   assert.equal(posts.length,1);
   assert.deepEqual(JSON.parse(posts[0].options.body),{amount:'100000',loss_pct:'5',profit_pct:'10'});
 });
+test('flat zero-entry day offers one audited resume',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  data.session={day:today,state:'completed',entries:0,resumes:0,realized_pnl:'0',position:null};
+  timers[0]();await settle();
+  assert.equal(nodes['bn-run'].disabled,false);
+  assert.equal(nodes['bn-run'].textContent,'Resume today’s paper Run');
+});
 test('active session enables Stop and summaries are rendered as text',async()=>{
   const {nodes,data,timers}=setup();await settle();
   data.session={state:'running',detail:'<script>bad()</script>',cash:'100',pnl:'0',entries:0,position:null};

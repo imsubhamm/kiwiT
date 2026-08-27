@@ -156,6 +156,22 @@ def test_stop_during_ai_inference_prevents_entry(desk):
     assert service.status()["session"]["state"] == "completed"
 
 
+def test_flat_zero_entry_session_can_resume_once_with_original_limits(desk):
+    service, _market, _analyst, _clock = desk
+    original = service.start(100000, 5, 10, "test")
+    service.stop("test")
+    resumed = service.start(100000, 5, 10, "test-resume")
+    assert resumed["state"] == "running"
+    assert resumed["resumes"] == 1
+    service.stop("test")
+    assert service.start(100000, 5, 10, "test")["state"] == "completed"
+    with pytest.raises(ValueError, match="immutable"):
+        service.start(100001, 5, 10, "test")
+    events = service.status()["events"]
+    assert any(e["kind"] == "run_resumed" and e["detail"]["limits_preserved"] for e in events)
+    assert original["day"] == resumed["day"]
+
+
 def test_hallucinated_contract_is_blocked(desk):
     service, _market, analyst, _clock = desk
     original = analyst.decide
