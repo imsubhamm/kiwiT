@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 15
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate deployment secrets
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
