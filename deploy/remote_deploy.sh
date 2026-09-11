@@ -24,15 +24,21 @@ if ! flock -n 9; then
   exit 1
 fi
 
+backup_dir=$(mktemp -d /opt/kiwit/deploy-backup.XXXXXX)
+cp /etc/kiwit/kiwit.env "$backup_dir/kiwit.env"
+cp /etc/systemd/system/kiwit-api.service "$backup_dir/kiwit-api.service"
+cp /etc/nginx/conf.d/kiwit.conf "$backup_dir/kiwit.conf"
+
 rollback() {
   exit_code=$?
   if [[ $activated == true && -n $previous_release && -d $previous_release ]]; then
     echo "readiness failed; rolling back to $previous_release" >&2
     ln -sfn "$previous_release" /opt/kiwit/current
-    install -m 0644 "$previous_release/deploy/kiwit-api.service" /etc/systemd/system/kiwit-api.service
+    install -m 0644 "$backup_dir/kiwit-api.service" /etc/systemd/system/kiwit-api.service
+    install -o root -g kiwit -m 0640 "$backup_dir/kiwit.env" /etc/kiwit/kiwit.env
     install -m 0644 "$previous_release/deploy/kiwit-intraday.service" /etc/systemd/system/kiwit-intraday.service 2>/dev/null || true
     install -m 0644 "$previous_release/deploy/kiwit-intraday.timer" /etc/systemd/system/kiwit-intraday.timer 2>/dev/null || true
-    install -m 0644 "$previous_release/deploy/nginx-kiwit.conf" /etc/nginx/conf.d/kiwit.conf
+    install -m 0644 "$backup_dir/kiwit.conf" /etc/nginx/conf.d/kiwit.conf
     systemctl daemon-reload
     systemctl stop kiwit-banknifty.timer kiwit-banknifty.service 2>/dev/null || true
     if [[ -f "$previous_release/deploy/kiwit-banknifty.service" ]]; then
