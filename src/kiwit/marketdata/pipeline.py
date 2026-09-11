@@ -7,6 +7,7 @@ from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 
+from .canonical import archive_candle, ordered_candles
 from .downloader import NSEArchiveDownloader
 from .manifest import ManifestLog
 from .models import NormalizedBar, ValidationReport
@@ -69,6 +70,10 @@ class MarketDataPipeline:
     def _write_bars(path: Path, bars: list[NormalizedBar]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         fields = ["trading_date", "symbol", "series", "open", "high", "low", "close", "volume", "source_sha256", "source_format", "isin"]
+        canonical = ordered_candles(archive_candle(bar) for bar in bars)
+        path.with_suffix(".market-v1.jsonl").write_text(
+            "".join(json.dumps(bar.to_json_dict(), sort_keys=True) + "\n" for bar in canonical), encoding="utf-8"
+        )
         with path.open("w", newline="", encoding="utf-8") as stream:
             writer = csv.DictWriter(stream, fieldnames=fields)
             writer.writeheader()

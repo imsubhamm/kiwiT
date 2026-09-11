@@ -2,11 +2,12 @@
 
 import itertools
 from collections import defaultdict
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from math import isfinite
 
-from .intraday import IST, _quote_time
+from .intraday import IST
+from .marketdata.canonical import Instrument, groww_candles
 
 VERSION = "banknifty-chart-v2-week"
 
@@ -23,26 +24,10 @@ def number(value):
 
 def parse_minutes(payload, now):
     """Provider timestamps denote opens; return closed regular-session bars only."""
-    if payload.get("interval_in_minutes") != 1:
-        raise ValueError("Chart analysis requires one-minute candles")
-    result = {}
-    for row in payload.get("candles", []):
-        if len(row) < 5:
-            raise ValueError("Incomplete chart candle")
-        start = _quote_time({"timestamp": row[0]}, now).astimezone(IST)
-        end = start + timedelta(minutes=1)
-        if end > now or not time(9, 15) <= start.time() < time(15, 30):
-            continue
-        if start.second or start.microsecond:
-            raise ValueError("Unaligned minute candle")
-        op, high, low, close = map(number, row[1:5])
-        if not low <= min(op, close) <= max(op, close) <= high:
-            raise ValueError("Invalid chart OHLC")
-        bar = {"at": end.isoformat(), "open": op, "high": high, "low": low, "close": close}
-        if end in result and result[end] != bar:
-            raise ValueError("Conflicting duplicate chart candle")
-        result[end] = bar
-    return [result[at] for at in sorted(result)]
+    bars = groww_candles(payload, now, Instrument("BANKNIFTY", segment="INDEX", series="INDEX"))
+    return [{"at": bar.closed_at.astimezone(IST).isoformat(),
+             **{field: number(getattr(bar, field)) for field in ("open", "high", "low", "close")}}
+            for bar in bars]
 
 
 def aggregate(bars, minutes):

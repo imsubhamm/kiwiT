@@ -52,7 +52,7 @@ install -d -o kiwit -g kiwit -m 0750 "$release_dir"
 tar -xzf "$archive" -C "$release_dir"
 chown -R kiwit:kiwit "$release_dir"
 runuser -u kiwit -- python3 -m venv "$release_dir/.venv"
-runuser -u kiwit -- "$release_dir/.venv/bin/python" -m pip install --disable-pip-version-check "$release_dir[api,production,workflow,research]"
+runuser -u kiwit -- "$release_dir/.venv/bin/python" -m pip install --disable-pip-version-check "$release_dir[api,production,workflow,research,ml]"
 printf '%s\n' "$release_sha" > "$release_dir/RELEASE_SHA"
 chown kiwit:kiwit "$release_dir/RELEASE_SHA"
 
