@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from . import session_adapter
 from .brokers.groww import GrowwBrokerClient
 from .database import PostgresDatabase
 from .paper_session import COST_RATE, ENTRY_CUTOFF, FLATTEN_TIME, PaperSessionMixin, serialized
@@ -501,6 +502,8 @@ class IntradayService(PaperSessionMixin):
         session_id: UUID | None = None,
     ) -> dict[str, Any]:
         now = now or datetime.now(UTC)
+        if approved and not session_adapter.entry_permitted(self, now):
+            raise ValueError("Session lifecycle blocks new entries; check readiness and manual RUN")
         with self.database.transaction() as connection:
             signal = connection.execute(
                 "SELECT symbol,expires_at,entry_price,quantity,status FROM intraday_signals WHERE signal_id=%s AND account_id=%s FOR UPDATE",
@@ -731,6 +734,8 @@ class IntradayService(PaperSessionMixin):
     @serialized
     def run_once(self, now: datetime | None = None) -> dict[str, Any]:
         now = now or datetime.now(UTC)
+        if session_adapter.configured():
+            return session_adapter.run(self, now)
         run_id = uuid4()
         with self.database.transaction() as connection:
             connection.execute(

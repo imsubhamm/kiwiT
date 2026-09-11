@@ -1,0 +1,14 @@
+{
+  "engine": "legacy-cash-observer",
+  "calendar_version": "REPLACE_WITH_VERIFIED_CALENDAR_VERSION",
+  "sessions": [],
+  "state_path": "/opt/kiwit/shared/market-sessions.sqlite3",
+  "schedule": {
+    "timezone": "Asia/Kolkata",
+    "premarket_seconds": 900,
+    "observation_delay_seconds": 900,
+    "entry_cutoff_seconds": 1800,
+    "close_policy": "FLATTEN_ON_FRESH_QUOTE",
+    "health_max_age_seconds": 30
+  }
+}

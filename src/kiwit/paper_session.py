@@ -10,6 +10,8 @@ from functools import wraps
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from . import session_adapter
+
 IST = ZoneInfo("Asia/Kolkata")
 ENTRY_CUTOFF = time(15, 0)
 FLATTEN_TIME = time(15, 10)  # conservative cash-market cutoff; remainder is reconciliation
@@ -150,6 +152,7 @@ class PaperSessionMixin:
             if existing:
                 if tuple(existing) != (amount, loss_pct, profit_pct):
                     raise ValueError("Today’s run is immutable. Limits cannot be changed or reset mid-day.")
+                session_adapter.control(self, "RUN", actor, now)
                 return self.session_status()  # duplicate Run is idempotent, never resets loss budget
             if local.weekday() >= 5 or local.time() >= ENTRY_CUTOFF:
                 raise ValueError("Run is available on weekdays before 15:00 IST; try the next trading day")
@@ -174,6 +177,7 @@ class PaperSessionMixin:
             ).fetchone()
             if not account or account[1] != "active" or account[0] < amount:
                 raise ValueError("Amount exceeds available simulated cash or account is inactive")
+            session_adapter.control(self, "RUN", actor, now)
             session_id = uuid4()
             connection.execute(
                 "INSERT INTO paper_sessions(session_id,account_id,trading_date,amount,loss_pct,profit_pct,state,"
@@ -215,6 +219,7 @@ class PaperSessionMixin:
     def stop_session(self, actor, now=None):
         now = now or datetime.now(UTC)
         with self.database.transaction() as connection:
+            session_adapter.control(self, "STOP", actor, now)
             session = self._active_session(connection)
             if session:
                 self._set_session(
@@ -229,7 +234,7 @@ class PaperSessionMixin:
             (state, detail, now, session_id),
         )
 
-    def session_tick(self, now):
+    def session_tick(self, now, *, entries_allowed=True):
         """Called inside the serialized worker transaction, before and after signals."""
         with self.database.transaction() as connection:
             session = self._active_session(connection)
@@ -284,6 +289,8 @@ class PaperSessionMixin:
                     "Waiting for 09:30 IST" if local.time() < time(9, 30) else "Entries closed; monitoring exits",
                     now,
                 )
+                return None
+            if not entries_allowed:
                 return None
             pending = connection.execute(
                 "SELECT signal_id FROM intraday_signals WHERE session_id=%s AND status='pending' ORDER BY signal_at",

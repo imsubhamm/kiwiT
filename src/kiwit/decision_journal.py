@@ -103,14 +103,14 @@ class DecisionJournal:
         llm: dict | None = None,
         risk_checks: dict | None = None,
     ) -> str:
-        if not decision_id or action not in {"TRADE", "NO_TRADE", "REJECT"}:
+        if not decision_id or action not in {"TRADE", "NO_TRADE", "REJECT", "REVIEW"}:
             raise ValueError("Decision identity/action is required")
         if isinstance(reason_codes, (str, bytes)):
             raise TypeError("Reason codes must be a collection, not a string")
         reasons = tuple(reason_codes)
         if not reasons or any(not isinstance(r, str) or not r for r in reasons):
             raise ValueError("Decision reason codes are required")
-        if action == "TRADE" and (not features.ready or candidate is None):
+        if action in {"TRADE", "REVIEW"} and (not features.ready or candidate is None):
             raise ValueError("Trade candidate requires ready features and a candidate")
         for model in models:
             if not model.get("version") or not isinstance(model.get("scores"), dict):

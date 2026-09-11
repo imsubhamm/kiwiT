@@ -200,7 +200,7 @@ class ModelRegistry:
                 result.update(activation_id=row[0], model_fingerprint=row[1])
                 model = self._load(db, kind, row[1])
             artifact = model.artifact
-            result.update(model_version=artifact["model_version"], dataset_fingerprint=artifact["dataset_fingerprint"])
+            result.update(model_version=artifact["model_version"], dataset_fingerprint=artifact["dataset_fingerprint"], training_data_end=artifact["splits"]["validation_end"])
             if snapshot.version != artifact["feature_version"] or not snapshot.ready:
                 return {**result, "reason_codes": ["FEATURES_INCOMPATIBLE_OR_UNREADY"]}
             if snapshot.calendar_version != artifact["calendar_version"]:

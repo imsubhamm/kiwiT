@@ -11,7 +11,11 @@ function setup() {
   ['bn-amount','bn-loss','bn-profit'].forEach(id=>doc.getElementById(id));
   const calls = [], timers = [];
   const data = {available:true, model:'test', session:null, events:[], decisions:[]};
-  const context = vm.createContext({document:doc,location:{protocol:'https:'},
+  class FixedDate extends Date {
+    constructor(...args) { super(...(args.length ? args : ['2026-09-11T05:00:00Z'])); }
+    static now() { return new Date('2026-09-11T05:00:00Z').getTime(); }
+  }
+  const context = vm.createContext({Date:FixedDate,document:doc,location:{protocol:'https:'},
     setInterval:fn=>timers.push(fn),
     call:async(path, options)=>{calls.push({path,options});return data;}});
   vm.runInContext(fs.readFileSync('src/kiwit/static/banknifty.js','utf8'),context);
@@ -22,7 +26,7 @@ test('playbook plans, rejection reasons and evidence remain text-only and clearl
   const {nodes,data,timers}=setup();await settle();
   data.playbooks=[{id:'test_v1',name:'<img onerror=bad()>'}];
   data.paper_review=[{playbook_id:'test_v1',closed_trades:1,winning_trades:0,closed_net_pnl:'-40',partially_exited_trades:1,realized_pnl_including_partial:'-60'}];
-  data.session={state:'running',strategy_selection:{version:'selector-v1',at:new Date().toISOString(),evaluations:[{playbook_id:'test_v1',eligible:false,reasons:['5m/15m conflict']}],plans:[{id:'abc',playbook_id:'test_v1',symbol:'BANKNIFTY',quantity:30,expires_at:'2026-01-01T00:00:00Z',underlying_trigger:55000,underlying_invalidation:54900,underlying_max_chase:55050,max_fill:'101',planned_stop:'95',planned_target:'110'}]}};
+  data.session={state:'running',strategy_selection:{version:'selector-v1',at:new Date('2026-09-11T05:00:00Z').toISOString(),evaluations:[{playbook_id:'test_v1',eligible:false,reasons:['5m/15m conflict']}],plans:[{id:'abc',playbook_id:'test_v1',symbol:'BANKNIFTY',quantity:30,expires_at:'2026-01-01T00:00:00Z',underlying_trigger:55000,underlying_invalidation:54900,underlying_max_chase:55050,max_fill:'101',planned_stop:'95',planned_target:'110'}]}};
   timers[0]();await settle();
   assert.match(nodes['bn-playbooks'].children[0].textContent,/5m\/15m conflict/);
   assert.match(nodes['bn-entry-plans'].children[0].textContent,/EXPIRED/);
@@ -62,7 +66,7 @@ test('Run posts capital and limits once, with no extra approval dialog',async()=
 });
 test('flat zero-entry day offers one audited resume',async()=>{
   const {nodes,data,timers}=setup();await settle();
-  const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date('2026-09-11T05:00:00Z'));
   data.session={day:today,state:'completed',entries:0,resumes:0,realized_pnl:'0',position:null};
   timers[0]();await settle();
   assert.equal(nodes['bn-run'].disabled,false);
@@ -102,7 +106,7 @@ test('previous calendar week and missing coverage are visible separately',async(
     coverage:{status:'complete',partial_sessions:[],absent_weekdays_unverified:[]},
     ohlc:{open:100,high:110,low:99,close:108},return_pct:8,range_pct:11,
     structure:{higher_closes:4,lower_closes:0,higher_highs:4,higher_lows:4,lower_highs:0,lower_lows:0}};
-  data.session={state:'running',chart_analysis:{at:new Date().toISOString(),ready:true,summary:'Weekly context',
+  data.session={state:'running',chart_analysis:{at:new Date('2026-09-11T05:00:00Z').toISOString(),ready:true,summary:'Weekly context',
     timeframes:{},patterns:[],previous_calendar_week:week,
     weekly_alignment:{alignment:'aligned',price_location:'inside_previous_week_range'}}};
   timers[0]();await settle();

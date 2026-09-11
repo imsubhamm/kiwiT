@@ -159,3 +159,55 @@ See [ML framework](ML_FRAMEWORK.md) for KIW-19 version-bound training, local reg
 ## Strategy candidates
 
 See [Strategy candidate generator](STRATEGY_CANDIDATES.md) for KIW-20 regime compatibility, conflict retention, confidence gates and deterministic cooldown handling.
+
+## Explicit uncertainty policy
+
+See [NO_TRADE policy](UNCERTAINTY_POLICY.md) for KIW-21 versioned abstention rules and mandatory decision evidence.
+
+## Meta decision engine
+
+See [Meta Decision Engine](META_DECISION_ENGINE.md) for KIW-22 deterministic eligibility, ranking, audit evidence and the mandatory downstream risk boundary.
+
+## LLM gateway
+
+See [LLM gateway](LLM_GATEWAY.md) for KIW-23 separated advisory roles, strict schemas, provider adapters, bounded calls and benchmark isolation.
+
+## Market Context Analyst
+
+See [Context Analyst](CONTEXT_ANALYST.md) for KIW-24 point-in-time supplied evidence, structured context risk and frozen-scenario evaluation.
+
+## Trade Critic
+
+See [Trade Critic](TRADE_CRITIC.md) for KIW-25 proposal-bound advisory verdicts and outcome-blind benchmarking.
+
+## Champion/challenger evaluation
+
+See [LLM evaluation](LLM_EVALUATION.md) for KIW-26 frozen corpus/report artifacts, identical provider inputs, leakage checks and promotion prerequisites.
+
+## Mandatory risk policy
+
+See [Risk policy](RISK_POLICY.md) for KIW-27 independent hard limits, paper-only decisions and audit requirements.
+
+## Deterministic sizing
+
+See [Position sizing](POSITION_SIZING.md) for KIW-28 versioned numeric stop/target rules, lot/tick rounding and risk/capital caps.
+
+## Durable paper simulation
+
+See [Paper simulator](PAPER_SIMULATOR.md) for KIW-29 transactional quote-driven fills, lifecycle and portfolio accounting.
+
+## Unified historical replay
+
+See [Unified backtest](UNIFIED_BACKTEST.md) for KIW-30 shared feature/model/decision/risk orchestration, quote-driven paper execution and reproducible reports.
+
+## Model and strategy evaluation
+
+See [Evaluation dashboard](EVALUATION_DASHBOARD.md) for KIW-31 version-filtered HTML/JSON reporting, degradation, calibration and evidence coverage.
+
+## Controlled model learning
+
+See [Model promotion](MODEL_PROMOTION.md) for KIW-32 frozen retraining plans, held-out comparison gates, manual activation and recorded rollback.
+
+## Market-session lifecycle
+
+See [Session orchestrator](SESSION_ORCHESTRATOR.md) for KIW-33 durable lifecycle scheduling, readiness gates, restart/manual RUN behavior and remaining EC2 integration.
