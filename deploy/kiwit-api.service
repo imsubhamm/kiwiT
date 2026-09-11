@@ -9,7 +9,7 @@ User=kiwit
 Group=kiwit
 WorkingDirectory=/opt/kiwit/current
 EnvironmentFile=/etc/kiwit/kiwit.env
-ExecStart=/opt/kiwit/current/.venv/bin/uvicorn kiwit.api:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+ExecStart=/opt/kiwit/current/.venv/bin/uvicorn kiwit.api:app --host 127.0.0.1 --port 8001 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=5
 TimeoutStopSec=20

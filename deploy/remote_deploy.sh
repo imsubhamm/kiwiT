@@ -85,10 +85,13 @@ systemctl daemon-reload
 nginx -t
 ln -sfn "$release_dir" /opt/kiwit/current
 activated=true
+# The server environment may carry a previous release SHA; use the archived identity.
+sed -i "/^KIWIT_RELEASE_SHA=/d" /etc/kiwit/kiwit.env
+printf 'KIWIT_RELEASE_SHA=%s\n' "$release_sha" >> /etc/kiwit/kiwit.env
 systemctl restart kiwit-api
 systemctl reload nginx
 for attempt in {1..10}; do
-  if curl --fail --silent --connect-timeout 3 --max-time 10 http://127.0.0.1:8000/ready >/dev/null; then
+  if curl --fail --silent --connect-timeout 3 --max-time 10 http://127.0.0.1:8001/ready >/dev/null; then
     break
   fi
   if [[ $attempt -eq 10 ]]; then
