@@ -1,14 +1,14 @@
 # EC2 and GitHub Deployment
 
-The API runs as an unprivileged `kiwit` systemd service on `127.0.0.1:8000`; Nginx is the public listener. GitHub Actions runs tests on pull requests and deploys every commit merged or pushed to `main`.
+The API runs as an unprivileged `kiwit` systemd service on `127.0.0.1:8001`; Nginx is the public listener. GitHub Actions runs tests on pull requests and deploys every commit merged or pushed to `main`.
 
 ## One-time EC2 bootstrap
 
 The EC2 key must authenticate first:
 
 ```bash
-chmod 600 ~/Downloads/kiwikey.pem
-ssh -i ~/Downloads/kiwikey.pem <AMI_USER>@13.201.76.17
+chmod 600 ~/.ssh/tathyasm.pem
+ssh -i ~/.ssh/tathyasm.pem ubuntu@16.16.97.239
 ```
 
 Then clone the repository and run:
@@ -19,7 +19,7 @@ cd kiwiT
 sudo bash deploy/bootstrap_ec2.sh
 ```
 
-The security group should allow SSH only from the operator/GitHub runner strategy selected, HTTP temporarily, and HTTPS publicly after a domain and certificate are configured. Port 8000 must not be public.
+The security group should allow SSH only from the operator/GitHub runner strategy selected, HTTP temporarily, and HTTPS publicly after a domain and certificate are configured. Port 8001 must not be public.
 
 ## GitHub production secrets
 
@@ -49,5 +49,7 @@ sudo systemctl daemon-reload
 sudo nginx -t
 sudo systemctl restart kiwit-api
 sudo systemctl reload nginx
-curl --fail http://127.0.0.1:8000/ready
+curl --fail http://127.0.0.1:8001/ready
 ```
+
+The shared EC2 host reserves port 8001 for KiwiT; port 8000 belongs to another application. Releases preserve `/etc/kiwit/kiwit.env`; provision or rotate application secrets on the host separately. GitHub needs only the SSH deployment secrets. The deploy script updates the release identity and backs up host configuration for rollback.
