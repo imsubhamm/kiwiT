@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from .domain import Quote, RiskDecision, Side, TradeProposal
+from .domain import Decision, Quote, RiskDecision, Side, TradeProposal
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ class PaperBroker:
         return self._fills_by_proposal.get(proposal_id)
 
     def execute(self, proposal: TradeProposal, risk: RiskDecision, quote: Quote) -> PaperFill:
-        if risk.proposal_id != proposal.proposal_id or risk.quantity <= 0:
+        if risk.decision != Decision.APPROVE or risk.proposal_id != proposal.proposal_id or risk.quantity <= 0:
             raise ValueError("proposal lacks an approved positive quantity")
         if proposal.proposal_id in self._filled_proposals:
             raise ValueError("duplicate proposal execution")

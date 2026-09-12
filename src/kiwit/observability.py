@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import threading
 import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+
+from .decision_journal import Redactor
 
 
 class JsonFormatter(logging.Formatter):
@@ -24,7 +28,10 @@ class JsonFormatter(logging.Formatter):
             if value is not None:
                 event[name] = value
         if record.exc_info:
-            event["exception"] = self.formatException(record.exc_info)
+            event["exception_type"] = record.exc_info[0].__name__ if record.exc_info[0] else "Unknown"
+        secrets = [v for k, v in os.environ.items()
+                   if re.search(r"TOKEN|SECRET|PASSWORD|API_KEY|DATABASE_URL", k, re.IGNORECASE) and v]
+        event = Redactor(secrets).clean(event)
         return json.dumps(event, separators=(",", ":"), default=str)
 
 

@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from .domain import Decision, PortfolioSnapshot, Position, RiskDecision, Side, TradeProposal
+from .brokers.boundary import PaperExecutionBoundary
+from .domain import PortfolioSnapshot, Position, Side, TradeProposal
 from .llm.critic import proposal_for_risk
 from .marketdata.canonical import IST, utc
 from .marketdata.features import FeatureEngine
@@ -49,6 +50,7 @@ class PaperDecisionCore:
         self.history, self.calendar, self.instrument = history, calendar, instrument
         self.execution_instrument, self.registry, self.journal = execution_instrument, registry, journal
         self.simulator, self.risk_policy, self.sizing_rules, self.audit = simulator, risk_policy, sizing_rules, audit
+        self.execution = PaperExecutionBoundary(simulator)
         self.meta = meta or MetaDecisionEngine()
         self.features = FeatureEngine(calendar)
         self.previous, self.decisions, self.curve, self.order_context = [], [], [], {}
@@ -209,16 +211,10 @@ class PaperDecisionCore:
                     risk = policy.evaluate(proposal, portfolio, cost, state=state, now=at, audit=self.audit)
                     result["risk"] = risk
                     if risk["decision"] == "approve" and risk["quantity"] == sizing["quantity"]:
-                        decision = RiskDecision(
-                            Decision.APPROVE,
-                            proposal.proposal_id,
-                            risk["quantity"],
-                            Decimal(risk["risk_budget"]),
-                            Decimal(risk["estimated_loss"]),
-                            (),
-                        )
                         self.order_context[str(proposal.proposal_id)] = {**candidate, "entry": sizing["entry"]}
-                        result["order"] = self.simulator.submit(proposal, decision, at=at)
+                        result["order"] = self.execution.execute_approved(
+                            meta=meta, risk=risk, proposal=proposal, critic=review, now=at
+                        )
                         self.previous.append(candidate)
                         result["status"] = "SUBMITTED"
                     else:

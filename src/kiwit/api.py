@@ -143,7 +143,7 @@ def create_app(
             app.state.metrics.finish(request.method, route_name, status_code, duration)
             logger.info(
                 "request_completed",
-                extra={"request_id": request_id, "method": request.method, "path": request.url.path,
+                extra={"request_id": request_id, "method": request.method, "path": route_name,
                        "status_code": status_code, "duration_ms": round(duration * 1000, 2)},
             )
         response.headers["X-Request-ID"] = request_id
@@ -179,6 +179,12 @@ def create_app(
             logger.exception("readiness_failed")
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "database unavailable") from error
         return {"status": "ok", "database": "connected", "schema_version": result["schema_version"]}
+
+    @app.get("/api/v1/operations/readiness", dependencies=protected)
+    def execution_readiness(request: Request) -> dict[str, Any]:
+        from .operational_readiness import inspect_readiness
+
+        return inspect_readiness(request.app.state.database, request.app.state.intraday)
 
     @app.get("/metrics", dependencies=protected, response_class=PlainTextResponse)
     def metrics(request: Request) -> str:

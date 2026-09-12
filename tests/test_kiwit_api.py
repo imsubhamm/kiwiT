@@ -64,6 +64,14 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/ready").json()["database"], "injected")
         self.assertEqual(self.client.get("/api/v1/paper/accounts/test").status_code, 401)
 
+    def test_operational_readiness_requires_auth_and_never_authorizes_execution(self):
+        path = "/api/v1/operations/readiness"
+        self.assertEqual(self.client.get(path).status_code, 401)
+        response = self.client.get(path, headers={"X-Kiwit-Api-Key": self.key})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["new_execution_allowed"])
+        self.assertEqual(response.json()["v2_model_readiness"], "NOT_ASSESSED")
+
     def test_banknifty_endpoints_require_auth_and_validate_limits(self):
         headers = {'X-Kiwit-Api-Key': self.key}
         body = {'amount': 100000, 'loss_pct': 5, 'profit_pct': 10}

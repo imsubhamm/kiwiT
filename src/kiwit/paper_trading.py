@@ -188,6 +188,8 @@ class PostgresPaperLedger:
             ).fetchone()
             if existing:
                 return PaperFill(existing[0], proposal.proposal_id, existing[1], Side(existing[2]), int(existing[3]), existing[4])
+            # Hold through commit: a concurrent halt must serialize against this fill.
+            connection.execute("LOCK TABLE system_halts IN SHARE MODE")
             blocked = connection.execute(
                 "SELECT EXISTS(SELECT 1 FROM system_halts WHERE active AND scope IN ('global',%s))", (account_id,)
             ).fetchone()[0]

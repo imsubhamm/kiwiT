@@ -773,7 +773,7 @@ class IntradayService(PaperSessionMixin):
             else:
                 state, detail = "outside_window", "Runs weekdays from 09:30 to 15:45 IST"
         except Exception as error:  # noqa: BLE001 - worker must persist every unexpected run failure
-            state, detail = "failed", f"{type(error).__name__}: {error}"
+            state, detail = "failed", f"{type(error).__name__}: worker failed; check operational readiness"
         with self.database.transaction() as connection:
             connection.execute(
                 "UPDATE intraday_worker_runs SET completed_at=%s,state=%s,quotes_ingested=%s,signals_created=%s,"

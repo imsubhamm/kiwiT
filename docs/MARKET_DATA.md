@@ -211,3 +211,7 @@ See [Model promotion](MODEL_PROMOTION.md) for KIW-32 frozen retraining plans, he
 ## Market-session lifecycle
 
 See [Session orchestrator](SESSION_ORCHESTRATOR.md) for KIW-33 durable lifecycle scheduling, readiness gates, restart/manual RUN behavior and remaining EC2 integration.
+
+## Operations hardening
+
+See [Operations hardening](OPERATIONS_HARDENING.md) for KIW-34 secret-safe logging, authenticated dependency diagnostics and serialized emergency halt checks.
