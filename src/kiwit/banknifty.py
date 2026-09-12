@@ -17,7 +17,7 @@ from uuid import uuid4
 from .brokers.groww import BrokerApiError
 from .chart_analysis import entry_evidence
 from .intraday import IST, SignalMailer
-from .options_ai import DAILY_BUDGET, MODEL, RESERVATION, TRIAL_BUDGET, OpenAIPaperAnalyst
+from .options_ai import DAILY_BUDGET, MODEL, RESERVATION, TRIAL_BUDGET, OpenAIPaperAnalyst, provider_ready
 from .options_market import BankNiftyMarket
 from .options_risk import fees, fill_price
 from .paper_session import validate_limits
@@ -274,7 +274,7 @@ class BankNiftyService:
                 raise ValueError("Previous Bank Nifty session must be reconciled first")
             if now.astimezone(IST).weekday() >= 5 or now.astimezone(IST).time() >= time(15):
                 raise ValueError("Start on a weekday before 15:00 IST")
-            if not self.enabled or not os.getenv("OPENAI_API_KEY") or self.market is None:
+            if not self.enabled or not provider_ready() or self.market is None:
                 raise ValueError("Bank Nifty AI worker/key/read-only feed is not configured")
             if self.store.halted(connection):
                 raise ValueError("Safety halt is active")
@@ -345,7 +345,7 @@ class BankNiftyService:
                 "ORDER BY trading_date DESC LIMIT 10"
             ).fetchall()
         return {
-            "available": self.enabled and self.market is not None and bool(os.getenv("OPENAI_API_KEY")),
+            "available": self.enabled and self.market is not None and provider_ready(),
             "execution": "paper-only",
             "model": MODEL,
             "selector_version": SELECTOR_VERSION,

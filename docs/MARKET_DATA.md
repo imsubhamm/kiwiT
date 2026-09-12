@@ -215,3 +215,11 @@ See [Session orchestrator](SESSION_ORCHESTRATOR.md) for KIW-33 durable lifecycle
 ## Operations hardening
 
 See [Operations hardening](OPERATIONS_HARDENING.md) for KIW-34 secret-safe logging, authenticated dependency diagnostics and serialized emergency halt checks.
+
+## Future RL research design
+
+See [RL specification](RL_SPECIFICATION.md) for KIW-36 draft state/action/reward contracts, baseline comparisons and experiment prerequisites. No RL training or deployment is enabled.
+
+## RL shadow prototype
+
+See [RL shadow environment](RL_SHADOW_ENVIRONMENT.md) for the partial KIW-37 offline prototype and remaining integration/evaluation requirements.

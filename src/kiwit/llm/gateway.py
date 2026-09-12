@@ -93,6 +93,8 @@ class Adapter(Protocol):
 class DeepSeekAdapter:
     """Only a provider credential; fixed HTTPS endpoint, no redirects or tools."""
 
+    endpoint = "https://api.deepseek.com/chat/completions"
+
     def __init__(self, api_key: str):
         self._api_key = api_key
 
@@ -103,7 +105,7 @@ class DeepSeekAdapter:
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:  # noqa: SIM117
                 async with client.stream(
                     "POST",
-                    "https://api.deepseek.com/chat/completions",
+                    self.endpoint,
                     headers={"Authorization": f"Bearer {self._api_key}"},
                     json={
                         "model": model,
@@ -134,6 +136,12 @@ class DeepSeekAdapter:
             )
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise RetryableError("PROVIDER_TRANSPORT") from exc
+
+
+class TokenHarborAdapter(DeepSeekAdapter):
+    """OpenAI-compatible TokenHarbor transport, with the same bounded JSON checks."""
+
+    endpoint = "https://tokenharbor.ai/v1/chat/completions"
 
 
 PROMPTS = {
@@ -285,3 +293,19 @@ class LLMGateway:
                 {"scenario_fingerprint": _hash(frozen), "result": await gateway._call(frozen["role"], frozen["input"])}
             )
         return results
+
+
+def tokenharbor_gateway(audit, *, config_path=None):
+    """Load operator-managed local credentials; no secrets are placed in model config."""
+    from pathlib import Path
+
+    path = Path(config_path) if config_path else Path.home() / ".config/kiwit/tokenharbor.env"
+    if path.stat().st_mode & 0o077:
+        raise ValueError("Provider configuration must be private (0600)")
+    settings = dict(line.split("=", 1) for line in path.read_text().splitlines() if line and not line.startswith("#"))
+    key = settings["TOKENHARBOR_API_KEY"]
+    if not key or settings["KIWIT_LLM_PROVIDER"] != "tokenharbor":
+        raise ValueError("Invalid provider configuration")
+    model = settings["KIWIT_LLM_MODEL"]
+    return LLMGateway({"tokenharbor": TokenHarborAdapter(key)}, audit,
+                      GatewayConfig(provider="tokenharbor", context_model=model, critic_model=model), secrets=(key,))

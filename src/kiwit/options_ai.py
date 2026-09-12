@@ -7,7 +7,8 @@ import os
 import urllib.request
 from decimal import Decimal
 
-MODEL = "gpt-5.6-terra"
+PROVIDER = os.getenv("KIWIT_LLM_PROVIDER", "openai")
+MODEL = os.getenv("KIWIT_LLM_MODEL", "deepseek-v4.1-flash:free" if PROVIDER == "tokenharbor" else "gpt-5.6-terra")
 RESERVATION = Decimal(".20")
 DAILY_BUDGET = Decimal(2)
 TRIAL_BUDGET = Decimal(18)  # leave $2 of the user's $20 credit as a buffer
@@ -115,8 +116,21 @@ def parse_response(payload):
     return result, {"input_tokens": incoming, "output_tokens": outgoing, "budget_charge_usd": str(cost)}
 
 
+def provider_ready():
+    return bool(os.getenv("TOKENHARBOR_API_KEY" if PROVIDER == "tokenharbor" else "OPENAI_API_KEY")) and PROVIDER in {"openai", "tokenharbor"}
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class OpenAIPaperAnalyst:
     def decide(self, snapshot):
+        if PROVIDER == "tokenharbor":
+            return self._tokenharbor(snapshot)
+        if PROVIDER != "openai":
+            raise ValueError("Unsupported AI provider")
         key = os.getenv("OPENAI_API_KEY", "").strip()
         if not key:
             raise ValueError("OPENAI_API_KEY is missing")
@@ -132,5 +146,36 @@ class OpenAIPaperAnalyst:
             payload = json.loads(response.read(200_000))
         try:
             return parse_response(payload)
+        except (KeyError, TypeError, AttributeError) as error:
+            raise ValueError("Malformed AI response; no decision accepted") from error
+
+
+    def _tokenharbor(self, snapshot):
+        key = os.getenv("TOKENHARBOR_API_KEY", "").strip()
+        if not key:
+            raise ValueError("TokenHarbor credential missing")
+        body = json.dumps({"model": MODEL, "messages": [
+            {"role": "system", "content": PROMPT + " Return only JSON matching this schema: " + json.dumps(SCHEMA)},
+            {"role": "user", "content": json.dumps(snapshot, default=str)}],
+            "response_format": {"type": "json_object"}, "max_tokens": 1000, "stream": False}).encode()
+        if len(body) > 20000:
+            raise ValueError("AI context exceeds request budget")
+        request = urllib.request.Request("https://tokenharbor.ai/v1/chat/completions", data=body,
+            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
+        with urllib.request.build_opener(NoRedirect()).open(request, timeout=25) as response:
+            raw = response.read(200001)
+        if len(raw) > 200000:
+            raise ValueError("AI response exceeds size limit")
+        try:
+            payload = json.loads(raw)
+            choice = payload["choices"][0]
+            if choice["finish_reason"] != "stop" or choice["message"].get("tool_calls"):
+                raise ValueError("Incomplete or tool-bearing response")
+            result, usage = parse_response({"status": "completed", "output": [{"type": "message", "content": [
+                {"type": "output_text", "text": choice["message"]["content"]}]}],
+                "usage": {"input_tokens": payload["usage"]["prompt_tokens"],
+                          "output_tokens": payload["usage"]["completion_tokens"]}})
+            usage.update(provider="tokenharbor", model=payload.get("model"), cost_basis="conservative_internal_budget_not_provider_invoice")
+            return result, usage
         except (KeyError, TypeError, AttributeError) as error:
             raise ValueError("Malformed AI response; no decision accepted") from error
