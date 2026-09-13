@@ -17,14 +17,14 @@
       <div class="sidebar-foot"><div class="mode-card"><span class="pulse"></span><div><strong>Paper mode</strong><small>Live capital protected</small></div></div><p>KIWIT SYSTEMS · INDIA</p></div>
     </aside>
     <div class="workspace">
-      <header class="topbar"><div><p class="breadcrumb">KIWIT / COMMAND CENTER</p><h1>Good day, Operator.</h1></div><div class="market-state"><span class="pulse"></span><div><strong id="system-state">Checking connection</strong><small id="clock">IST · --:--:--</small></div></div></header>
+      <header class="topbar"><div><p class="breadcrumb">KIWIT / COMMAND CENTER</p><h1>Trading workspace</h1></div><div class="market-state"><span class="pulse"></span><div><strong id="system-state">Checking connection</strong><small id="clock">IST · --:--:--</small></div></div></header>
       <main id="overview">
-<section class="workspace-intro"><span class="eyebrow">SIMULATED TRADING</span><h2>Bank Nifty workspace</h2><p>Check your session, position and data before starting a paper run.</p></section>
-        <section class="credentials glass reveal delay-1"><label><span>Signed-in operator</span><input id="signed-in-user" value="Loading session…" readonly></label><label><span>Paper account</span><input id="account" value="kiwit-paper-auto"></label><button id="refresh" class="button primary"><span>Sync workspace</span><b>↗</b></button><button id="logout" class="button ghost">Sign out</button><div id="connection" class="connection" aria-live="polite"><i></i><span>Awaiting connection</span></div></section>
+<section class="workspace-intro"><div class="depth-emblem" aria-hidden="true"><span>K</span></div><span class="eyebrow">SIMULATED TRADING</span><h2>Bank Nifty workspace</h2><p>Check your session, position and data before starting a paper run.</p></section>
+<div class="workspace-toolbar"><button id="refresh" class="button primary"><span>Sync workspace</span><b>↗</b></button><details class="account-details"><summary>Account &amp; sign-in details</summary>        <section class="credentials glass reveal delay-1"><label><span>Signed-in operator</span><input id="signed-in-user" value="Loading session…" readonly></label><label><span>Legacy cash account</span><input id="account" value="kiwit-paper-auto"></label><button id="logout" class="button ghost">Sign out</button><div id="connection" class="connection" aria-live="polite"><i></i><span>Awaiting connection</span></div></section></details></div>
         <div class="workspace-feedback" role="status"><span id="refresh-status">Waiting for sign-in</span><span id="action-status"></span><a href="#banknifty">Go to Bank Nifty ↓</a></div>
         <section class="panel glass intraday reveal" id="banknifty">
           <div class="signal-head"><div><span class="eyebrow">BANK NIFTY OPTIONS · AI PAPER DESK</span><h3>Your paper session</h3><p>Long calls or puts only. This isolated simulated ledger is separate from the legacy cash portfolio below.</p></div></div>
-          <div id="bn-readiness" class="readiness" role="status">Checking Bank Nifty connection…</div><p id="bn-next-action">Wait for the latest session status before taking action.</p><form id="bn-form" class="run-controls">
+          <div id="bn-readiness" class="readiness" role="status">Checking Bank Nifty connection…</div><p id="bn-next-action">Wait for the latest session status before taking action.</p><div class="desk-metrics" aria-label="Bank Nifty session overview"><article><span>Paper cash</span><strong id="bn-cash-card">—</strong></article><article><span>Session P&L</span><strong id="bn-pnl-card">—</strong></article><article><span>Open position</span><strong id="bn-position-card">—</strong></article><article><span>Position valuation</span><strong id="bn-data-card">—</strong></article></div><form id="bn-form" class="run-controls">
             <label>Paper capital ₹<input id="bn-amount" type="number" min="1" max="1000000" step="0.01" value="100000" required></label>
             <label>Loss limit %<input id="bn-loss" type="number" min="0.01" max="25" step="0.01" value="5" required></label>
             <label>Profit target %<input id="bn-profit" type="number" min="0.01" max="100" step="0.01" value="10" required></label>
@@ -40,7 +40,7 @@
             <select id="bn-timeframe"><option value="1m">1 minute — timing</option><option value="5m" selected>5 minutes — setups</option><option value="15m">15 minutes — context</option></select>
             <div id="bn-chart" class="bn-chart" aria-label="Bank Nifty candlestick chart"></div>
             <p class="hint">Green: rising candle · Red: falling candle · Dashed lines: previous-day high/low and opening range. Historical context is five complete observed sessions, not necessarily a calendar week.</p>
-            <div id="bn-context" class="signal-audit"></div>
+            <details class="secondary-detail"><summary>Indicators and historical context</summary><div id="bn-context" class="signal-audit"></div></details>
             <div id="bn-patterns" class="signal-audit"></div>
             <p class="hint">Rule-based detections are experimental, not validated edges or profit probabilities. Index volume is unavailable; no VWAP or volume confirmation is inferred.</p>
           </section>
@@ -52,7 +52,7 @@
             <p id="bn-active-plan" class="hint">No selected entry plan.</p>
             <p class="hint">Experimental paper playbooks, not profitability-approved strategies. No eligible setup means wait—not a forced trade. The AI selects a plan; code rechecks its trigger, expiry, premium price and risk before a simulated fill.</p>
           </section>
-          <section class="bn-chart-panel" aria-label="Paper playbook evidence">
+<details class="workspace-section"><summary>Performance evidence and daily reports</summary>          <section class="bn-chart-panel" aria-label="Paper playbook evidence">
             <h3>Paper evidence by playbook</h3>
             <p class="hint">Version-attributed paper exits since this selector release. Older unattributed history is not retroactively classified. Closed-trade net results include illustrative costs. Partial exits are not counted as completed trades. These are forward observations, not a historical options backtest, drawdown report or live approval.</p>
             <div id="bn-playbook-review" class="signal-audit"></div>
@@ -62,7 +62,7 @@
             <h3>3:30 PM daily reports</h3>
             <p class="hint">Generated automatically at or immediately after 15:30 IST. The report records reconciliation honestly; an unresolved position is never presented as a completed exit.</p>
             <div id="bn-daily-reports" class="signal-audit"></div>
-          </section>
+          </section></details>
           <details class="secondary-detail"><summary>AI decisions and technical audit</summary><h3>AI decisions &amp; audit trail</h3>
           <div id="bn-decisions" class="signal-audit"></div><div id="bn-events" class="signal-audit"></div></details>
         </section>

@@ -82,6 +82,12 @@
     try {
       const data = await call('/api/v1/banknifty/status');
       const s = data.session;
+      const setMetric = (id, value) => { if (el(id)) el(id).textContent = value; };
+      const rupees = value => Number.isFinite(Number(value)) ? new Intl.NumberFormat('en-IN', {style:'currency', currency:'INR', maximumFractionDigits:2}).format(Number(value)) : 'Unavailable';
+      setMetric('bn-cash-card', s ? rupees(s.cash) : 'No session');
+      setMetric('bn-pnl-card', s ? rupees(s.pnl) : 'No session');
+      setMetric('bn-position-card', s?.position ? `${s.position.contract.symbol} × ${s.position.quantity}` : 'None');
+      setMetric('bn-data-card', !s?.position ? 'No open position' : s.valuation_fresh === true ? 'Fresh at last sync' : 'Stale / unconfirmed');
       const readiness = el('bn-readiness');
       const nextAction = el('bn-next-action');
       if (readiness) readiness.textContent = !data.available ? 'Bank Nifty unavailable' : s?.state === 'stopping' ? 'Needs attention · session awaiting closure' : s?.state === 'running' ? 'Paper session running' : 'Bank Nifty connected · paper only';
@@ -128,6 +134,7 @@
       lines('bn-decisions', (data.decisions || []).map(d => `${d.at} · ${d.state} · ${d.result?.decision ? d.result.decision.action + ': ' + d.result.decision.summary : 'No usable AI decision'}${d.result?.validation_error ? ' · BLOCKED: '+d.result.validation_error : ''}`));
       lines('bn-events', (data.events || []).slice(0, 15).map(e => `${e.at} · ${e.kind} · ${JSON.stringify(e.detail)}`));
     } catch (error) {
+      if (el('bn-data-card')) el('bn-data-card').textContent = 'Connection lost · unconfirmed';
       if (el('bn-readiness')) el('bn-readiness').textContent = 'Bank Nifty connection unavailable';
       if (el('bn-next-action')) el('bn-next-action').textContent = 'Displayed values may be old. Sync again to confirm the recorded session state.';
       el('bn-detail').textContent = 'AI desk unavailable: ' + error.message;
