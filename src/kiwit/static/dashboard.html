@@ -1,8 +1,10 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#070b16">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#09090c">
   <title>kiwiT · Trading intelligence</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/dashboard.css"><link rel="stylesheet" href="/static/router.css"><link rel="stylesheet" href="/static/sync-feedback.css"><link rel="stylesheet" href="/static/intraday.css">
+<link rel="stylesheet" href="/static/workspace.css">
+<link rel="stylesheet" href="/static/night.css">
 </head>
 <body>
   <div id="preview-notice" role="alert">Local HTML preview cannot connect to kiwiT. <a href="https://kiwit.tathyaforge.in/dashboard">Open the secure dashboard</a>. On the deployed page, this notice disappears when JavaScript loads.</div>
@@ -11,24 +13,18 @@
   <div class="shell">
     <aside class="sidebar">
       <a class="brand" href="/dashboard" aria-label="kiwiT dashboard"><span class="brand-mark"><span>K</span></span><span><strong>kiwiT</strong><small>TRADING INTELLIGENCE</small></span></a>
-      <nav aria-label="Primary navigation"><a class="nav-item active" href="#overview"><span class="nav-icon">◈</span>Overview</a><a class="nav-item" href="#banknifty"><span class="nav-icon">⌁</span>Bank Nifty AI</a><a class="nav-item" href="#portfolio"><span class="nav-icon">⌁</span>Portfolio</a><a class="nav-item" href="#approval"><span class="nav-icon">✓</span>Strategy approval</a><a class="nav-item" href="#operations"><span class="nav-icon">◉</span>Operations</a><a class="nav-item" href="#research"><span class="nav-icon">✦</span>Research</a><a class="nav-item" href="#safety"><span class="nav-icon">◇</span>Risk controls</a></nav>
+      <nav aria-label="Primary navigation"><a class="nav-item active" href="#overview"><span class="nav-icon">◈</span>Overview</a><a class="nav-item" href="#banknifty"><span class="nav-icon">⌁</span>Bank Nifty AI</a><a class="nav-item" href="#portfolio"><span class="nav-icon">⌁</span>Cash portfolio</a><a class="nav-item" href="#approval"><span class="nav-icon">✓</span>Archived strategies</a><a class="nav-item" href="#operations"><span class="nav-icon">◉</span>Operations</a><a class="nav-item" href="#research"><span class="nav-icon">✦</span>Research</a><a class="nav-item" href="#safety"><span class="nav-icon">◇</span>Risk controls</a></nav>
       <div class="sidebar-foot"><div class="mode-card"><span class="pulse"></span><div><strong>Paper mode</strong><small>Live capital protected</small></div></div><p>KIWIT SYSTEMS · INDIA</p></div>
     </aside>
     <div class="workspace">
       <header class="topbar"><div><p class="breadcrumb">KIWIT / COMMAND CENTER</p><h1>Good day, Operator.</h1></div><div class="market-state"><span class="pulse"></span><div><strong id="system-state">Checking connection</strong><small id="clock">IST · --:--:--</small></div></div></header>
       <main id="overview">
-        <section class="hero reveal"><div class="hero-copy"><span class="kicker"><i></i>RESEARCH-GRADE EXECUTION</span><h2>Clarity before<br><em>capital.</em></h2><p>Evidence-led market intelligence, disciplined risk controls, and transparent paper execution—composed in one calm workspace.</p></div><div class="hero-orbit" aria-hidden="true"><span class="orbit orbit-a"></span><span class="orbit orbit-b"></span><span class="orb-core">K</span></div><div class="hero-badge"><span>EXECUTION</span><strong>PAPER ONLY</strong></div></section>
+<section class="workspace-intro"><span class="eyebrow">SIMULATED TRADING</span><h2>Bank Nifty workspace</h2><p>Check your session, position and data before starting a paper run.</p></section>
         <section class="credentials glass reveal delay-1"><label><span>Signed-in operator</span><input id="signed-in-user" value="Loading session…" readonly></label><label><span>Paper account</span><input id="account" value="kiwit-paper-auto"></label><button id="refresh" class="button primary"><span>Sync workspace</span><b>↗</b></button><button id="logout" class="button ghost">Sign out</button><div id="connection" class="connection" aria-live="polite"><i></i><span>Awaiting connection</span></div></section>
-        <div class="workspace-feedback" role="status"><span id="refresh-status">Waiting for sign-in</span><span id="action-status"></span><a href="#signals">Go to trade signals ↓</a></div>
-        <section class="metrics reveal delay-2">
-          <article class="metric-card plum"><div class="metric-top"><span>Cash balance</span><i>₹</i></div><strong id="cash">—</strong><small>SIMULATED INR</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 45 C25 45,30 28,55 33 S88 45,110 25 S143 14,160 23 S194 39,240 7"/></svg></article>
-          <article class="metric-card gold"><div class="metric-top"><span>Realized P&amp;L</span><i>↗</i></div><strong id="pnl">—</strong><small>LEDGER TOTAL</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 40 C20 34,34 42,51 33 S76 19,96 26 S128 46,148 30 S180 16,201 18 S219 11,240 5"/></svg></article>
-          <article class="metric-card blue"><div class="metric-top"><span>Open positions</span><i>◎</i></div><strong id="position-count">—</strong><small>ACTIVE LONGS</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 45 C28 44,38 33,62 35 S99 40,116 26 S141 19,160 29 S196 20,240 12"/></svg></article>
-          <article class="metric-card mint"><div class="metric-top"><span>Execution state</span><i>◆</i></div><strong id="execution">—</strong><small>SAFETY GATE</small><svg viewBox="0 0 240 54" preserveAspectRatio="none"><path d="M0 43 C24 38,31 24,51 29 S83 42,104 34 S137 10,157 19 S192 31,240 8"/></svg></article>
-        </section>
+        <div class="workspace-feedback" role="status"><span id="refresh-status">Waiting for sign-in</span><span id="action-status"></span><a href="#banknifty">Go to Bank Nifty ↓</a></div>
         <section class="panel glass intraday reveal" id="banknifty">
-          <div class="signal-head"><div><span class="eyebrow">BANK NIFTY OPTIONS · AI PAPER DESK</span><h3>One Run. AI decisions. Controlled risk.</h3><p>Long calls or puts only. This isolated simulated ledger is separate from the legacy cash portfolio below.</p></div></div>
-          <form id="bn-form" class="run-controls">
+          <div class="signal-head"><div><span class="eyebrow">BANK NIFTY OPTIONS · AI PAPER DESK</span><h3>Your paper session</h3><p>Long calls or puts only. This isolated simulated ledger is separate from the legacy cash portfolio below.</p></div></div>
+          <div id="bn-readiness" class="readiness" role="status">Checking Bank Nifty connection…</div><p id="bn-next-action">Wait for the latest session status before taking action.</p><form id="bn-form" class="run-controls">
             <label>Paper capital ₹<input id="bn-amount" type="number" min="1" max="1000000" step="0.01" value="100000" required></label>
             <label>Loss limit %<input id="bn-loss" type="number" min="0.01" max="25" step="0.01" value="5" required></label>
             <label>Profit target %<input id="bn-profit" type="number" min="0.01" max="100" step="0.01" value="10" required></label>
@@ -67,10 +63,10 @@
             <p class="hint">Generated automatically at or immediately after 15:30 IST. The report records reconciliation honestly; an unresolved position is never presented as a completed exit.</p>
             <div id="bn-daily-reports" class="signal-audit"></div>
           </section>
-          <h3>AI decisions &amp; audit trail</h3>
-          <div id="bn-decisions" class="signal-audit"></div><div id="bn-events" class="signal-audit"></div>
+          <details class="secondary-detail"><summary>AI decisions and technical audit</summary><h3>AI decisions &amp; audit trail</h3>
+          <div id="bn-decisions" class="signal-audit"></div><div id="bn-events" class="signal-audit"></div></details>
         </section>
-        <section class="panel glass intraday reveal" id="signals">
+<details class="workspace-section"><summary>Legacy cash desk and history</summary>        <section class="panel glass intraday reveal" id="signals">
           <div class="signal-head"><div><span class="eyebrow">LEGACY CASH PAPER DESK</span><h3>Cash observer history</h3><p>This older cash-market ledger is separate from the Bank Nifty AI desk above. Existing positions and audit history are preserved.</p></div><div class="feed-state"><span>MARKET FEED</span><strong id="feed-status">WAITING</strong><small id="feed-detail">No worker status loaded</small></div></div>
           <form id="run-form" class="run-controls">
             <label>Amount · simulated ₹<input id="run-amount" type="number" min="1" max="1000000" step="0.01" value="10000" required></label>
@@ -90,13 +86,19 @@
           <div id="delivery-summary" class="control-note">Email delivery status has not loaded.</div>
           <div id="reconciliation-summary" class="control-note">Daily reconciliation has not loaded.</div>
           <div class="signal-audit"><div><span class="eyebrow">IMMUTABLE ACTIVITY</span><h4>Approval and exit audit</h4></div><div id="signal-audit"><p class="empty">No audit events loaded.</p></div></div>
-        </section>
+        </section></details>
         <section class="content-grid reveal delay-3">
-          <article class="panel glass portfolio" id="portfolio"><div class="panel-head"><div><span class="eyebrow">PORTFOLIO</span><h3>Open positions</h3></div><span class="live-label"><i></i>LIVE VIEW</span></div><div class="table-wrap"><table><thead><tr><th>Instrument</th><th>Quantity</th><th>Average</th><th>Realized P&amp;L</th></tr></thead><tbody id="positions"><tr><td colspan="4" class="empty"><span class="empty-icon">⌁</span>Connect your workspace to load positions</td></tr></tbody></table></div></article>
+          <article class="panel glass portfolio" id="portfolio"><h3>Legacy cash account</h3><p>These totals exclude the Bank Nifty desk.</p>        <section class="metrics reveal delay-2">
+          <article class="metric-card plum"><div class="metric-top"><span>Cash balance</span><i>₹</i></div><strong id="cash">—</strong><small>SIMULATED INR</small></article>
+          <article class="metric-card gold"><div class="metric-top"><span>Realized P&amp;L</span><i>↗</i></div><strong id="pnl">—</strong><small>LEDGER TOTAL</small></article>
+          <article class="metric-card blue"><div class="metric-top"><span>Open positions</span><i>◎</i></div><strong id="position-count">—</strong><small>ACTIVE LONGS</small></article>
+          <article class="metric-card mint"><div class="metric-top"><span>Execution state</span><i>◆</i></div><strong id="execution">—</strong><small>SAFETY GATE</small></article>
+        </section>
+<div class="panel-head"><div><span class="eyebrow">PORTFOLIO</span><h3>Open positions</h3></div><span class="live-label"><i></i>LIVE VIEW</span></div><div class="table-wrap"><table><thead><tr><th>Instrument</th><th>Quantity</th><th>Average</th><th>Realized P&amp;L</th></tr></thead><tbody id="positions"><tr><td colspan="4" class="empty"><span class="empty-icon">⌁</span>Connect your workspace to load positions</td></tr></tbody></table></div></article>
           <article class="panel safety" id="safety"><div class="safety-glow"></div><span class="eyebrow">OPERATOR CONTROL</span><h3>Execution safety</h3><p>Instantly block every new simulated fill without changing existing positions.</p><label><span>Safety-stop reason</span><input id="halt-reason" value="Manual operator safety stop"></label><div class="actions"><button id="halt" class="button danger">Halt execution</button><button id="resume" class="button ghost">Resume</button></div><div class="guardrail"><span>◆</span><p><strong>Capital guardrail active</strong><small>Broker order execution is disabled</small></p></div></article>
         </section>
         <section class="panel glass research reveal" id="research"><div class="research-intro"><span class="eyebrow">KIWIT INTELLIGENCE</span><h3>Ask the evidence.</h3><p>Search the curated corpus of trading books and research with traceable citations.</p></div><div class="research-body"><div class="search"><span>⌕</span><input id="query" placeholder="Why should stops determine position size?"><button id="search" class="button primary">Retrieve insight</button></div><div id="results" class="results"><p class="empty">Your research results will appear here.</p></div></div></section>
-        <section class="approval panel glass reveal" id="approval">
+<details class="workspace-section"><summary>Archived strategy research</summary>        <section class="approval panel glass reveal" id="approval">
           <div class="evidence-notice"><strong>Archived research · not a live-price panel</strong><p>The cards below describe the frozen v1 backtest. Refreshing does not rerun research or approve a strategy. The server snapshot status is checked on every sync.</p><p id="evidence-status">Evidence snapshot not yet checked.</p><details><summary>Why can’t I approve this strategy?</summary><p>v1 failed three gates. There is no dashboard promotion button or research-job runner yet. A new frozen strategy must pass independent tests before promotion. Checkmarks and crosses are results, not controls.</p></details><a href="#signals">Open the live paper signal desk →</a></div>
           <div class="approval-head"><div><span class="eyebrow">EVIDENCE GATE · REGIME ROUTER V1</span><h3>Strategy approval</h3><p>The complete regime classifier, strategy router, cash fallback and portfolio are tested as one immutable system.</p></div><div class="decision rejected"><span>CURRENT DECISION</span><strong><i></i>NOT APPROVED</strong><small>0 of 3 candidates promoted</small></div></div>
           <div class="approval-summary"><div><span>Dataset</span><strong>3.02M observations</strong><small>2020-01-01 → 2026-08-20</small></div><div><span>Universe</span><strong>3,359 NSE symbols</strong><small>Point-in-time · top 250 liquid</small></div><div><span>Execution</span><strong>Next session open</strong><small>Daily mark-to-market</small></div><div><span>Cost model</span><strong>10 bps / side</strong><small>Stress tested to 30 bps</small></div></div>
@@ -107,8 +109,8 @@
           </div>
           <div class="approval-rules"><div><span class="eyebrow">APPROVAL CONTRACT</span><h4>Every gate. No exceptions.</h4></div><ol><li><b>1</b><span><strong>Specify</strong>Immutable instruments, entries, exits, stops, sizing and hours.</span></li><li><b>2</b><span><strong>Backtest</strong>Point-in-time data, realistic costs and delayed execution.</span></li><li><b>3</b><span><strong>Challenge</strong>Out-of-sample, random controls, parameter and cost stress.</span></li><li><b>4</b><span><strong>Promote</strong>Only unanimous gate passage unlocks paper trading.</span></li></ol></div>
           <div class="next-experiment"><span>→</span><p><strong>Next evidence task</strong>Design a separately frozen v2 hypothesis that reduces drawdown and proves entry timing beyond randomized selection. Do not tune v1.</p><em>V1 ARCHIVED · LOCKED</em></div>
-        </section>
-        <section class="operations panel glass reveal" id="operations">
+        </section></details>
+<details class="workspace-section"><summary>Research operations and evidence</summary>        <section class="operations panel glass reveal" id="operations">
           <p class="control-note">This review covers the promoted-strategy evidence workflow, which remains locked. The separate intraday observer may collect experimental paper trades; those do not establish router approval. Failure-test labels below are static implementation assertions, not current production drill results.</p>
           <div class="ops-head"><div><span class="eyebrow">PAPER OPERATIONS</span><h3>Evidence collection</h3><p>Automated observation, failure readiness and formal review in one place.</p></div><div class="ops-status"><span>AUTOMATION</span><strong id="automation-status">LOCKED</strong><small id="automation-reason">Waiting for an approved strategy</small></div></div>
           <div class="ops-grid">
@@ -117,8 +119,8 @@
           </div>
           <div class="ops-section-head"><div><span class="eyebrow">RESILIENCE MATRIX</span><h4>Failure tests</h4></div><span>FAIL CLOSED BY DEFAULT</span></div><div id="failure-tests" class="failure-grid"><div class="failure"><i></i><div><strong>Stale data</strong><small>Freshness validation</small></div><b>TESTED</b></div><div class="failure"><i></i><div><strong>Broker timeout</strong><small>Bounded upstream call</small></div><b>TESTED</b></div><div class="failure"><i></i><div><strong>Duplicate request</strong><small>Idempotent execution</small></div><b>TESTED</b></div><div class="failure"><i></i><div><strong>Partial fill</strong><small>Bounded reconciliation</small></div><b>TESTED</b></div><div class="failure"><i></i><div><strong>Database outage</strong><small>Readiness rejects traffic</small></div><b>TESTED</b></div><div class="failure pending"><i></i><div><strong>EC2 restart</strong><small>Controlled reboot</small></div><b>PENDING</b></div></div>
           <div class="incident-review"><div><span class="eyebrow">INCIDENT JOURNAL</span><h4>Operational incidents</h4></div><div id="incidents"><p class="empty">Connect the workspace to load incident history.</p></div></div>
-        </section>
-        <p id="error" role="alert"></p><footer><span>kiwiT / SYSTEM STATUS: NOMINAL</span><span>BUILT FOR DISCIPLINE · NOT PREDICTION</span></footer>
+        </section></details>
+        <p id="error" role="alert"></p><footer><span>kiwiT / PAPER TRADING WORKSPACE</span><span>BUILT FOR DISCIPLINE · NOT PREDICTION</span></footer>
       </main>
     </div>
   </div>

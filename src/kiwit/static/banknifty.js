@@ -82,6 +82,11 @@
     try {
       const data = await call('/api/v1/banknifty/status');
       const s = data.session;
+      const readiness = el('bn-readiness');
+      const nextAction = el('bn-next-action');
+      if (readiness) readiness.textContent = !data.available ? 'Bank Nifty unavailable' : s?.state === 'stopping' ? 'Needs attention · session awaiting closure' : s?.state === 'running' ? 'Paper session running' : 'Bank Nifty connected · paper only';
+      if (nextAction) nextAction.textContent = !data.available ? 'The desk is unavailable. Check service configuration and sync again.' : s?.state === 'stopping' ? 'A previous session must finish before another Run. ' + (s.detail || 'Waiting for position reconciliation.') : s?.state === 'running' ? 'Monitor your position below. Stop & exit requests closure when an executable quote is available.' : 'Review the session details and limits below. The server checks trading eligibility when you request Run.';
+
       renderAnalysis(s?.chart_analysis);
       const selection=s?.strategy_selection;
       const stale=!selection || Date.now()-Date.parse(selection.at)>120000 || Date.parse(selection.at)>Date.now();
@@ -123,6 +128,8 @@
       lines('bn-decisions', (data.decisions || []).map(d => `${d.at} · ${d.state} · ${d.result?.decision ? d.result.decision.action + ': ' + d.result.decision.summary : 'No usable AI decision'}${d.result?.validation_error ? ' · BLOCKED: '+d.result.validation_error : ''}`));
       lines('bn-events', (data.events || []).slice(0, 15).map(e => `${e.at} · ${e.kind} · ${JSON.stringify(e.detail)}`));
     } catch (error) {
+      if (el('bn-readiness')) el('bn-readiness').textContent = 'Bank Nifty connection unavailable';
+      if (el('bn-next-action')) el('bn-next-action').textContent = 'Displayed values may be old. Sync again to confirm the recorded session state.';
       el('bn-detail').textContent = 'AI desk unavailable: ' + error.message;
       el('bn-run').disabled = true;
       el('bn-chart-summary').textContent = 'Connection unavailable — displayed chart may be stale. No fresh analysis confirmed.';

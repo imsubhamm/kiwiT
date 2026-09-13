@@ -1,0 +1,23 @@
+/* Shared black / crimson identity. Green and amber are reserved for status. */
+:root{color-scheme:dark;--bg:#09090c;--surface:#131318;--line:#303038;--text:#f4f4f6;--ink:#f4f4f6;--muted:#b0b0bc;--lime:#ff5968;--green:#ff5968;--red:#ff7581;--mint:#77d9b0;--gold:#efc477;--plum:#ff8290;--blue:#b8c9ff;--shadow:0 18px 48px #0005;--serif:Inter,ui-sans-serif,system-ui,sans-serif}
+body{background:radial-gradient(ellipse at 90% 0,#48131b55,transparent 45%),#09090c;color:var(--text)}
+.sidebar,.topbar{background:#0d0d12;border-color:var(--line)}
+.brand-mark,.orb-core{background:linear-gradient(135deg,#ff4a5f,#b51e35);box-shadow:0 8px 24px #ed304733;color:white}
+.brand-mark span{background:#171019;color:#ff7482}.brand strong{color:#fff}.brand small,.breadcrumb,.sidebar-foot>p{color:#b0a6ad}
+.nav-item{color:#b9b4bd}.nav-item:hover{background:#242027;color:#fff}.nav-item.active{background:#401820;color:#fff;box-shadow:inset 3px 0 #ff4a5f}.nav-item.active:before{display:none}
+.mode-card,.market-state{background:#19171e;border-color:#3a2a32}.mode-card strong,.market-state strong{color:#f4f4f6}.pulse{background:#ff5968;box-shadow:none;animation:none}
+.ambient{display:none}.workspace-intro{padding:24px 0 24px 20px;border-left:3px solid #ff4a5f}.workspace-intro h2{font-size:clamp(26px,4vw,40px);letter-spacing:-.04em;font-weight:750}.workspace-intro p{color:var(--muted)}
+.glass,.panel,.portfolio,.safety,.credentials,.metric-card,.workspace-section,.secondary-detail,.bn-chart-panel,.candidate,.router-candidate,.equity-panel,.review-panel,.incident-review,.signal-card{background:#141419;border-color:var(--line);color:var(--text);box-shadow:none}
+.panel,.workspace-section{border-radius:14px}.workspace-feedback{background:#19191f;border-color:var(--line);color:var(--muted)}
+.readiness,.run-summary{background:#20171d;border-color:#68404a;color:#fff}.readiness{border-left:3px solid #ff5968}#bn-next-action{color:#d2cbd1}
+input,.run-controls input,.search,.bn-chart-panel select{background:#0c0c11;color:#f4f4f6;border-color:#45414b}input::placeholder{color:#a29aa7}input:focus{border-color:#ff6574;box-shadow:0 0 0 3px #ff596822}
+.primary,.login-card button{background:#c9253c;color:#fff;box-shadow:0 6px 18px #c9253c25}.danger{background:#31151c;color:#ffb4bd;border:1px solid #a74959}.ghost{background:#25242b;color:#ededf2;border-color:#49444f}.button:disabled{opacity:.55}
+.metric-card>strong,.approval-summary strong,.signal-warning strong,.guardrail strong,.next-experiment p strong,.approval-rules li strong{color:#f4f4f6}
+.metric-top,.metric-card .metric-top span,.metric-card>small,.credentials label,.safety label,th,.empty,.control-note,.hint,.signal-head p,.signal-metrics span,.signal-levels span,.signal-title small,.broker-access small,.audit-row small,.audit-row time,.feed-state small,.feed-state span,.candidate-note,.gate-list b,.approval-head p,.ops-head p,.research-intro p,.review-panel>p,.review-panel ul,.approval-summary span,.approval-summary small,.candidate-metrics span,.failure small,.guardrail small,.signal-warning span,footer{color:#b0b0bc!important}
+td,.result p,.next-experiment p,.approval-rules li{color:#dbd8e1}.table-wrap td,.gate-list>div{border-color:var(--line)}
+.evidence-notice,.signal-warning,.approval-summary,.candidate-metrics>div,.result,.approval-rules,.next-experiment,.feed-state,.broker-access,.failure,.ops-status{background:#1c1b22;border-color:#38343f;color:#d9d4de}
+.regime-route{background:#242029;color:#d2c9d6}.status-chip{color:#ddd4e0}.bn-grid{stroke:#35333d}.bn-axis{fill:#c5bfcd}.bn-level{stroke:#b8a8bc}.bn-up{fill:#77d9b0;stroke:#77d9b0}.bn-down{fill:#ff7581;stroke:#ff7581}
+.signal-audit{grid-template-columns:1fr;font-size:13px;line-height:1.65}.signal-audit p{margin:4px 0;overflow-wrap:anywhere}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid #ffa2ad;outline-offset:4px}
+.login-shell{background:#141419;border-color:#37303b;box-shadow:var(--shadow)}.login-copy{background:radial-gradient(ellipse at 10% 90%,#851f35,transparent 75%),#170e15}.login-copy:after{border-color:#ff596844;box-shadow:0 0 0 55px #ff596809,0 0 0 110px #ff596805}.login-copy h1{font-family:var(--serif);font-weight:750;letter-spacing:-.05em}.login-copy h1 em{color:#ff7887}.login-copy p,.login-copy small,.login-card>p,.login-card label{color:#bfb3c0}.login-card h2{font-family:var(--serif);font-weight:700}.eyebrow{color:#ff7887}.guardrail{border-color:var(--line)}.guardrail i{background:#77d9b0}
+@media(max-width:760px){.sidebar nav{border-top:1px solid var(--line);padding-top:12px}.workspace-intro{padding-top:12px;padding-bottom:12px}.workspace-intro h2{font-size:28px}}

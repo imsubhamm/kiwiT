@@ -110,7 +110,7 @@ async function refresh() {
       renderSession(null, false);
     }
     const message = failures.length ? `Partial sync — ${failures.join(' · ')}` : `Synchronized · ${formatTime(new Date())}`;
-    $('system-state').textContent = failures.length ? 'Connection needs attention' : 'Workspace connected';
+    $('system-state').textContent = failures.length ? 'Connection needs attention' : 'Cash and research connected';
     syncState(message, failures.length ? 'error' : 'success');
     if (failures.length) showError(new Error(message));
   })().catch(showError).finally(() => {
@@ -171,6 +171,8 @@ document.querySelectorAll('a[href^="#"]').forEach(link => {
     event.preventDefault();
     history.replaceState(null, '', link.getAttribute('href'));
     section.setAttribute('tabindex', '-1');
+    let parent = section.parentElement;
+    while (parent) { if (parent.tagName === 'DETAILS') parent.open = true; parent = parent.parentElement; }
     section.scrollIntoView({behavior:'instant', block:'start'});
     section.focus({preventScroll:true});
     setActiveSection(section.id);
