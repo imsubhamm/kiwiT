@@ -25,7 +25,7 @@ kiwit = "kiwit.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-kiwit = ["static/*"]
+kiwit = ["static/*", "static/media/*"]
 
 [tool.ruff]
 line-length = 120

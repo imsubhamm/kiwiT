@@ -16,3 +16,6 @@ td,.result p,.next-experiment p,.approval-rules li{color:#cbd5e1}.table-wrap td,
 .login-shell{background:#141E31;border-color:#263247;box-shadow:0 24px 70px #0005}.login-copy{background:radial-gradient(ellipse at 10% 90%,#14b8a622,transparent 75%),#0D1424;color:#F8FAFC}.login-copy h1 em{color:#F5B942}.login-copy p,.login-copy small,.login-card>p,.login-card label{color:#94A3B8}.login-copy:after{border-color:#f5b94222;box-shadow:0 0 0 55px #f5b94205,0 0 0 110px #f5b94203}.guardrail{border-color:#263247}
 a:focus-visible,button:focus-visible,summary:focus-visible{outline-color:#38BDF8}*{scrollbar-color:#43536d #0D1424}::selection{background:#14b8a64d;color:#F8FAFC}
 @media(max-width:760px){.desk-metrics article:nth-child(-n+2){border-bottom-color:#263247}}
+
+/* Decorative cinematic layer; opaque content surfaces preserve legibility. */
+body{position:relative;isolation:isolate}#ambient-video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:-1;pointer-events:none;opacity:.65}body:before,body:after{display:none}.workspace-intro{background:linear-gradient(110deg,#141e31e8,#0d1424c9)}@media(prefers-reduced-motion:reduce){#ambient-video{display:none}}
