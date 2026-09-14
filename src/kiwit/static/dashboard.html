@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/static/editorial.css">
 <link rel="stylesheet" href="/static/motion.css">
 <link rel="stylesheet" href="/static/premium.css">
+<link rel="stylesheet" href="/static/home-hero.css">
 </head>
 <body>
 <video id="ambient-video" muted loop playsinline preload="none" aria-hidden="true" tabindex="-1"></video>
@@ -24,7 +25,7 @@
     <div class="workspace">
       <header class="topbar"><div><p class="breadcrumb">NITIQUANT / COMMAND CENTER</p><h1>Trading workspace</h1></div><div class="market-state"><span class="pulse"></span><div><strong id="system-state">Checking connection</strong><small id="clock">IST · --:--:--</small></div></div></header>
       <main id="overview">
-<section class="workspace-intro"><div class="depth-emblem" aria-hidden="true"><span>N</span></div><span class="eyebrow">SIMULATED TRADING</span><h2>Bank Nifty workspace</h2><p>Check your session, position and data before starting a paper run.</p></section>
+<section class="workspace-intro"><span class="eyebrow">SIMULATED TRADING</span><h2>Bank Nifty workspace</h2><p>Check your session, position and data before starting a paper run.</p></section>
 <div class="workspace-toolbar"><button id="refresh" class="button primary"><span>Sync workspace</span><b>↗</b></button><details class="account-details"><summary>Account &amp; sign-in details</summary>        <section class="credentials glass reveal delay-1"><label><span>Signed-in operator</span><input id="signed-in-user" value="Loading session…" readonly></label><label><span>Legacy cash account</span><input id="account" value="kiwit-paper-auto"></label><button id="logout" class="button ghost">Sign out</button><div id="connection" class="connection" aria-live="polite"><i></i><span>Awaiting connection</span></div></section></details></div>
         <div class="workspace-feedback" role="status"><span id="refresh-status">Waiting for sign-in</span><span id="action-status"></span><a href="#banknifty">Go to Bank Nifty ↓</a></div>
         <section class="panel glass intraday reveal" id="banknifty">
@@ -136,4 +137,5 @@
 <script src="/static/pages.js" defer></script>
 <script src="/static/graph.js" defer></script>
 <script src="/static/ambient-video.js" defer></script>
+<script src="/static/home-hero.js" defer></script>
 </body></html>

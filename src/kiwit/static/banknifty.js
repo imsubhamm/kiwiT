@@ -81,6 +81,8 @@
     syncing = true;
     try {
       const data = await call('/api/v1/banknifty/status');
+      globalThis.nitiSessionSnapshot = data;
+      if (typeof CustomEvent !== "undefined") document.dispatchEvent(new CustomEvent("niti-session"));
       const s = data.session;
       const setMetric = (id, value) => { if (el(id)) el(id).textContent = value; };
       const rupees = value => Number.isFinite(Number(value)) ? new Intl.NumberFormat('en-IN', {style:'currency', currency:'INR', maximumFractionDigits:2}).format(Number(value)) : 'Unavailable';
@@ -137,6 +139,8 @@
       if (el('bn-data-card')) el('bn-data-card').textContent = 'Connection lost · unconfirmed';
       if (el('bn-readiness')) el('bn-readiness').textContent = 'Bank Nifty connection unavailable';
       if (el('bn-next-action')) el('bn-next-action').textContent = 'Displayed values may be old. Sync again to confirm the recorded session state.';
+      globalThis.nitiSessionSnapshot = null;
+      if (typeof CustomEvent !== 'undefined') document.dispatchEvent(new CustomEvent('niti-session'));
       el('bn-detail').textContent = 'AI desk unavailable: ' + error.message;
       el('bn-run').disabled = true;
       el('bn-chart-summary').textContent = 'Connection unavailable — displayed chart may be stale. No fresh analysis confirmed.';
