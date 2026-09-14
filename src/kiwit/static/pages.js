@@ -2,6 +2,7 @@
 (() => {
   const main = document.getElementById('overview');
   const routes = {
+    'decision-graph': ['Decision Graph', 'Explore connections in recorded session evidence.'],
     overview: ['Home', 'Your paper workspace at a glance.'],
     banknifty: ['Bank Nifty', 'Manage your simulated options session and review market evidence.'],
     portfolio: ['Cash portfolio', 'Legacy cash positions, account totals and observer history.'],

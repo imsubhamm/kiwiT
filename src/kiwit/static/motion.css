@@ -1,0 +1,21 @@
+/* Ambient depth for the light trading workspace. Controls stay stationary. */
+body{background:#f5f4ef;isolation:isolate}
+body:before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(ellipse at 85% 12%,#e9b8c24a,transparent 45%),radial-gradient(ellipse at 12% 85%,#a7b9db32,transparent 42%),linear-gradient(115deg,#faf9f5,#f0f0e9);}
+body:after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background-image:radial-gradient(#706b731c .7px,transparent .7px);background-size:20px 20px;mask-image:linear-gradient(#0008,transparent 80%)}
+.sidebar{background:#faf9f3e8;backdrop-filter:blur(18px)}.topbar{background:#faf9f3d9;backdrop-filter:blur(18px)}
+.workspace-intro{position:relative;overflow:hidden;isolation:isolate;min-height:135px;padding:24px 165px 24px 24px;border:1px solid #d9d3d0;border-left:3px solid #ba3047;border-radius:16px;background:linear-gradient(110deg,#fffef9f5,#fbf0f2d9);box-shadow:inset 0 1px #fff,0 15px 38px #4e23320a}
+.workspace-intro:after{content:"";position:absolute;width:250px;height:250px;border:1px solid #b92c4019;border-radius:50%;right:-55px;top:-60px;box-shadow:0 0 0 24px #b92c4006,0 0 0 48px #b92c4004;pointer-events:none;z-index:-1}
+.depth-emblem{display:block;position:absolute;right:42px;top:28px;width:65px;height:65px;perspective:650px;animation:emblem-float 7s ease-in-out infinite;pointer-events:none}
+.depth-emblem span{transform:rotateX(15deg) rotateY(-24deg) rotateZ(8deg);border-radius:18px;box-shadow:5px 5px 0 #8c2237,10px 10px 0 #5b1c2a,18px 22px 26px #67223825,inset 2px 2px 5px #ffffff66}
+.home-summary,.home-links a,.route-page>.panel{background:#fffefbdc;border:1px solid #ddd9d0;border-radius:14px;box-shadow:0 10px 30px #343c4810,inset 0 1px #fff}
+.home-links a{position:relative;overflow:hidden;padding-top:25px;transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease}
+.home-links a:before{content:"";display:block;width:28px;height:4px;border-radius:4px;background:linear-gradient(90deg,#bd3049,#e8a6b3);margin-bottom:16px;box-shadow:0 3px 7px #b92c4025}
+.home-links a:hover{transform:translateY(-4px);box-shadow:0 18px 28px #343c4817;border-color:#c48290}.home-links a:active{transform:translateY(-1px)}
+.desk-metrics{border-radius:10px}.desk-metrics article{background:linear-gradient(145deg,#fffefa,#f2f1eb);box-shadow:inset 0 2px #fff}
+.route-page:not([hidden]){animation:page-enter .38s cubic-bezier(.2,.7,.2,1) both}
+.graph-layout svg{background:radial-gradient(ellipse at 50% 45%,#eef0e8,#fffdf6 75%);box-shadow:inset 0 0 45px #afb7a612}.graph-dot{filter:drop-shadow(0 3px 3px #29475e30)}.graph-center{filter:drop-shadow(0 5px 5px #b92c4038)}.graph-node circle{transition:stroke-width .2s,fill .2s}.graph-edge{stroke:#8a969487}
+html{scroll-behavior:smooth;scroll-padding-top:20px}*{scrollbar-width:thin;scrollbar-color:#c2a7af #f5f4ef}::selection{background:#f0bcc7;color:#581629}
+@keyframes emblem-float{0%,100%{translate:0 0}50%{translate:0 -6px}}
+@keyframes page-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@media(max-width:700px){.workspace-intro{padding:20px 95px 20px 18px;min-height:125px}.depth-emblem{width:42px;height:42px;right:26px;top:28px}.depth-emblem span{font-size:23px;border-radius:12px}.workspace-intro h2{font-size:26px}.workspace-intro p{font-size:12px}.home-links a{padding:18px}.home-links a:before{margin-bottom:10px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.depth-emblem,.route-page:not([hidden]){animation:none}.depth-emblem span{transform:none}.home-links a{transition:none}.home-links a:hover{transform:none}}

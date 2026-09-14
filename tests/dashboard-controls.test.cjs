@@ -48,9 +48,9 @@ function setup({failOperations=false, signals=[]} = {}) {
 }
 const settle = () => new Promise(resolve=>setImmediate(resolve));
 
-test('all seven navigation items focus real sections and update active state',async()=>{
+test('all eight navigation items focus real sections and update active state',async()=>{
   const {links,nodes}=setup(); await settle();
-  assert.equal(links.length,7);
+  assert.equal(links.length,8);
   for(const link of links){link.listeners.click({preventDefault(){}});const target=nodes[link.attrs.href.slice(1)];assert.ok(target.scrolled);assert.ok(target.focused);assert.equal(link.attrs['aria-current'],'location');assert.equal(links.filter(l=>l.attrs['aria-current']).length,1)}
 });
 test('sync survives one failed panel and releases the button',async()=>{
