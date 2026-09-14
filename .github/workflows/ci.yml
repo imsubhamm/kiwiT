@@ -39,7 +39,7 @@ jobs:
       - run: ruff check src/kiwit/llm src/kiwit/session_adapter.py src/kiwit/session_orchestrator.py src/kiwit/unified_backtest.py src/kiwit/evaluation_dashboard.py src/kiwit/risk_policy.py src/kiwit/sizing.py src/kiwit/paper_simulator.py
       - run: pytest -q
       - run: ruff check src/kiwit/playbooks.py src/kiwit/options_risk.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - run: node --test tests/*.test.cjs
