@@ -46,7 +46,7 @@
     const title = document.querySelector('.workspace-intro h2');
     title.textContent = routes[key][0];
     document.querySelector('.workspace-intro p').textContent = routes[key][1];
-    document.title = `${routes[key][0]} · kiwiT`;
+    document.title = `${routes[key][0]} · NitiQuant`;
     document.querySelectorAll('.nav-item').forEach(link => {
       const active = link.getAttribute('href') === '#'+key;
       link.classList.toggle('active', active);

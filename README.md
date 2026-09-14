@@ -1,4 +1,6 @@
-# kiwiT / TradingKIWI
+# NitiQuant
+
+Formerly kiwiT. The product is now NitiQuant; existing `kiwit` package names, CLI commands, environment variables, account identifiers and deployment URLs remain compatible.
 
 Indian-market research and experimental paper-trading platform. The Bank Nifty options desk combines read-only Groww data, multi-timeframe chart evidence, an OpenAI analyst and deterministic paper-execution controls. Earlier NSE archive research and cash-paper workflows remain separate.
 
@@ -16,7 +18,7 @@ python scripts/run_backtest.py
 python -m unittest discover -s tests
 ```
 
-Run the kiwiT configuration safety check:
+Run the NitiQuant configuration safety check:
 
 ```bash
 PYTHONPATH=src python -m kiwit.cli doctor

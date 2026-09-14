@@ -227,12 +227,12 @@ def render(report):
             + "</section>"
         )
     return (
-        "<!doctype html><html lang='en'><meta charset='utf-8'><title>KiwiT evaluation</title>"
+        "<!doctype html><html lang='en'><meta charset='utf-8'><title>NitiQuant evaluation</title>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'><style>"
         "body{font:16px system-ui;background:#101824;color:#e6edf5;max-width:1100px;margin:40px auto;padding:20px}"
         "section{background:#1c2939;padding:24px;margin:24px 0;border-radius:12px}"
         "pre{white-space:pre-wrap;overflow-wrap:anywhere}.warning{color:#ffd080}h3{text-transform:capitalize}"
-        "</style><h1>KiwiT model &amp; strategy evaluation</h1><p>Runs remain separate. "
+        "</style><h1>NitiQuant model &amp; strategy evaluation</h1><p>Runs remain separate. "
         "Missing outcomes and telemetry are unavailable, not zero evidence. Degradation is descriptive.</p>"
         "<p>Filters: "
         + html.escape(json.dumps(report["filters"]))

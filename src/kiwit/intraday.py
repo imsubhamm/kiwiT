@@ -98,7 +98,7 @@ class SignalMailer:
         if not self.configured:
             return "not_configured", "SMTP environment variables are not configured"
         message = EmailMessage()
-        message["Subject"] = f"kiwiT paper signal: {signal['symbol']} {signal['pattern']}"
+        message["Subject"] = f"NitiQuant paper signal: {signal['symbol']} {signal['pattern']}"
         message["From"] = self.sender
         message["To"] = self.recipient
         message.set_content(
@@ -125,7 +125,7 @@ class SignalMailer:
         if not self.configured:
             return "not_configured", "SMTP environment variables are not configured"
         message = EmailMessage()
-        message["Subject"] = f"kiwiT 3:30 PM paper report · {report['day']} · P&L ₹{report['realized_pnl']}"
+        message["Subject"] = f"NitiQuant 3:30 PM paper report · {report['day']} · P&L ₹{report['realized_pnl']}"
         message["From"] = self.sender
         message["To"] = self.recipient
         counts = report.get("event_counts", {})
@@ -136,7 +136,7 @@ class SignalMailer:
             else "Flat and reconciled"
         )
         message.set_content(
-            "kiwiT Bank Nifty options paper report\n\n"
+            "NitiQuant Bank Nifty options paper report\n\n"
             f"Trading day: {report['day']}\nCutoff: {report['cutoff']}\n"
             f"Final session state: {report['session_state']}\nReconciliation: {position_text}\n"
             f"Starting paper capital: ₹{report['capital']}\n"

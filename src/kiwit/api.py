@@ -51,7 +51,7 @@ class LoginRequest(BaseModel):
 
 
 class SignalReviewRequest(BaseModel):
-    reason: str = Field(default="Reviewed in kiwiT dashboard", min_length=2, max_length=500)
+    reason: str = Field(default="Reviewed in NitiQuant dashboard", min_length=2, max_length=500)
 
 
 class PaperSessionRequest(BaseModel):
@@ -112,7 +112,7 @@ def create_app(
             app.state.knowledge.close()
 
     app = FastAPI(
-        title="kiwiT Control Plane", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None,
+        title="NitiQuant Control Plane", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None,
         lifespan=lifespan,
     )
     allowed_hosts = [host.strip() for host in os.getenv("KIWIT_ALLOWED_HOSTS", "testserver,localhost,127.0.0.1").split(",")]
