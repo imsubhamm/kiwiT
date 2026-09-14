@@ -107,3 +107,13 @@ test('active run disables duplicate Run, exposes Stop, and hides per-trade appro
   assert.ok(!nodes['pending-signals'].innerHTML.includes('Approve paper buy'));
   assert.match(nodes['signal-help'].textContent,/No per-trade approval/);
 });
+
+test('safety actions serialize Halt and Resume; research ignores repeated submit',async()=>{
+ const {context,nodes}=setup();await settle();
+ let release,calls=0;context.call=()=>{calls++;return new Promise(resolve=>release=resolve)};
+ const first=context.safetyAction('halt');await context.safetyAction('resume');
+ assert.equal(calls,1);assert.equal(nodes.halt.disabled,true);assert.equal(nodes.resume.disabled,true);
+ release({account_id:'a',cash_balance:'0',realized_pnl:'0',positions:[],execution_halted:true});await first;
+ assert.equal(nodes.halt.disabled,false);assert.equal(nodes.resume.disabled,false);
+ nodes.query.value='risk';const search=context.retrieveInsight();await context.retrieveInsight();assert.equal(calls,2);release({hits:[]});await search;assert.equal(nodes.search.disabled,false);
+});

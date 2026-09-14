@@ -3,7 +3,7 @@
  const root=document.getElementById('decision-graph');
  const svg=root.querySelector('svg'), detail=document.getElementById('graph-detail');
  const ns='http://www.w3.org/2000/svg';
- let data=null;
+ let data=null, refreshing=false;
  const node=(tag,attrs,text)=>{const el=document.createElementNS(ns,tag);Object.entries(attrs).forEach(([k,v])=>el.setAttribute(k,v));if(text!==undefined)el.textContent=text;return el;};
  function render(){
   svg.replaceChildren();
@@ -26,9 +26,12 @@
   });
  }
  async function refresh(){
+  if(refreshing)return;refreshing=true;
+  const button=document.getElementById('graph-refresh');button.disabled=true;
   const status=document.getElementById('graph-status');
   try{data=await call('/api/v1/banknifty/status');status.textContent='Session evidence loaded · '+new Date().toLocaleTimeString('en-IN')+' · Connections show recorded groupings, not causal proof.';render();detail.textContent='Select a node to inspect its recorded evidence.';}
   catch(e){data=null;render();status.textContent='Evidence unavailable: '+e.message;detail.textContent='No live evidence loaded. The graph shows the available categories only.';}
+  finally{refreshing=false;button.disabled=false;}
  }
  document.getElementById('graph-refresh').addEventListener('click',refresh);
  window.addEventListener('hashchange',()=>{if(location.hash==='#decision-graph')refresh();});

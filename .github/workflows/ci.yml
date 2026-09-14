@@ -42,5 +42,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --test tests/dashboard-controls.test.cjs
-      - run: node --test tests/banknifty-dashboard.test.cjs
+      - run: node --test tests/*.test.cjs

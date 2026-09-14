@@ -150,11 +150,16 @@
   }
   async function action(event, name) {
     event.preventDefault(); if (busy) return; busy = true;
+    const stopWasDisabled = el('bn-stop').disabled;
     el('bn-run').disabled = el('bn-stop').disabled = true;
     try {
       const body = name === 'run' ? JSON.stringify({amount: el('bn-amount').value, loss_pct: el('bn-loss').value, profit_pct: el('bn-profit').value}) : undefined;
       await call('/api/v1/banknifty/' + name, {method: 'POST', body});
-    } catch (error) { el('bn-detail').textContent = error.message; busy = false; return; }
+    } catch (error) {
+      el('bn-detail').textContent = error.message + ' Sync to confirm the recorded state before retrying.';
+      el('bn-stop').disabled = stopWasDisabled;
+      return;
+    }
     finally { busy = false; }
     await sync();
   }

@@ -122,7 +122,11 @@ async function refresh() {
   return syncInFlight;
 }
 
+let safetyInFlight = false;
 async function safetyAction(action) {
+  if (safetyInFlight) return;
+  safetyInFlight = true;
+  $('halt').disabled = $('resume').disabled = true;
   const button = $(action);
   button.disabled = true;
   try {
@@ -130,7 +134,7 @@ async function safetyAction(action) {
     const data = await call(`/api/v1/paper/accounts/${encodeURIComponent($('account').value)}/${action}`, {method:'POST',body:JSON.stringify(body)});
     renderAccount(data);
     $('action-status').textContent = data.execution_halted ? 'New paper entries halted. Existing exits remain monitored.' : 'Account halt released. Strategy and freshness gates still apply.';
-  } catch (error) {showError(error)} finally {button.disabled = false}
+  } catch (error) {showError(error)} finally {safetyInFlight = false; $('halt').disabled = $('resume').disabled = false}
 }
 
 async function reviewSignal(event) {
@@ -155,6 +159,7 @@ async function reviewSignal(event) {
 }
 
 async function retrieveInsight() {
+  if ($('search').disabled) return;
   const query = $('query').value.trim();
   if (!query) {showError(new Error('Enter a research question first.')); return}
   $('search').disabled = true;

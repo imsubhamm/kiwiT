@@ -123,3 +123,13 @@ test('previous calendar week and missing coverage are visible separately',async(
   assert.match(text,/Partial weekly sessions: 2026-08-18/);
   assert.match(nodes['bn-chart-summary'].textContent,/new entries blocked/);
 });
+
+test('failed Stop remains recoverable and does not automatically retry a mutation',async()=>{
+ const {nodes,data,timers,context}=setup();await settle();
+ data.session={state:'running',day:'2026-09-11',entries:1};timers[0]();await settle();
+ assert.equal(nodes['bn-stop'].disabled,false);
+ let attempts=0;context.call=async()=>{attempts++;throw new Error('Network unavailable');};
+ await nodes['bn-stop'].listeners.click({preventDefault(){}});
+ assert.equal(attempts,1);assert.equal(nodes['bn-stop'].disabled,false);
+ assert.equal(nodes['bn-run'].disabled,true);assert.match(nodes['bn-detail'].textContent,/Sync to confirm/);
+});
