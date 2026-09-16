@@ -16,7 +16,7 @@ PLAYBOOKS = (
         "pattern": "opening_range_breakout",
         "strategy": "momentum",
         "regime": "trend",
-        "max_hold_minutes": 45,
+        "max_hold_minutes": None,
     },
     {
         "id": "breakout_retest_v1",
@@ -24,7 +24,7 @@ PLAYBOOKS = (
         "pattern": "breakout_retest",
         "strategy": "momentum",
         "regime": "trend",
-        "max_hold_minutes": 45,
+        "max_hold_minutes": None,
     },
     {
         "id": "trend_pullback_v1",
@@ -32,7 +32,7 @@ PLAYBOOKS = (
         "pattern": "ema_pullback",
         "strategy": "momentum",
         "regime": "trend",
-        "max_hold_minutes": 45,
+        "max_hold_minutes": None,
     },
     {
         "id": "range_reversal_v1",
@@ -40,7 +40,7 @@ PLAYBOOKS = (
         "pattern": "range_rejection",
         "strategy": "reversal",
         "regime": "range",
-        "max_hold_minutes": 30,
+        "max_hold_minutes": None,
     },
 )
 
@@ -171,6 +171,7 @@ def select_plans(snapshot, state, now):
                     "loss_pct": state["loss_pct"],
                     "profit_pct": state["profit_pct"],
                     "max_hold_minutes": playbook["max_hold_minutes"],
+                    "exit_policy": "risk_and_session_only_v2",
                 }
                 chosen["id"] = fingerprint(chosen)
                 break

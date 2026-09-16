@@ -103,7 +103,7 @@
       lines('bn-playbooks',(selection?.evaluations || []).map(e=>`${names[e.playbook_id] || e.playbook_id}: ${e.eligible ? 'ELIGIBLE' : 'WAIT'} · ${e.reasons.join('; ')}`));
       lines('bn-entry-plans',(selection?.plans || []).map(p=>`${names[p.playbook_id] || p.playbook_id} · ${p.symbol} × ${p.quantity} · ${Date.parse(p.expires_at)<=Date.now() ? 'EXPIRED' : 'Expires '+p.expires_at} · Trigger ${p.underlying_trigger} · Invalidation ${p.underlying_invalidation} · Chase bound ${p.underlying_max_chase} · Max premium fill ₹${p.max_fill} · Indicative premium stop/target ₹${p.planned_stop} / ₹${p.planned_target} · Plan ${p.id}`));
       const active=s?.position?.entry_plan;
-      el('bn-active-plan').textContent=active ? `ACTIVE · ${names[active.playbook_id] || active.playbook_id} · ${s.position.contract.symbol} · Actual premium stop ₹${s.position.stop} · target ₹${s.position.target} · Time exit by ${s.position.exit_deadline} · Underlying invalidation ${active.underlying_invalidation}` : 'No open position with a selected playbook.';
+      el('bn-active-plan').textContent=active ? `ACTIVE · ${names[active.playbook_id] || active.playbook_id} · ${s.position.contract.symbol} · Actual premium stop ₹${s.position.stop} · target ₹${s.position.target} · No fixed holding-time exit; risk and session exits remain active · Underlying invalidation ${active.underlying_invalidation}` : 'No open position with a selected playbook.';
       const review=new Map((data.paper_review || []).map(r=>[r.playbook_id,r]));
       const ids=[...new Set([...(data.playbooks || []).map(p=>p.id),...review.keys()])];
       lines('bn-playbook-review',ids.length ? ids.map(id=>{

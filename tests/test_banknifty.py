@@ -488,17 +488,14 @@ def test_ai_buy_is_revalidated_after_inference_and_rejection_is_audited(desk, fa
     assert any(e["kind"] == "blocked" and e["detail"].get("call_id") for e in status["events"])
 
 
-@pytest.mark.parametrize("reason", ["underlying_invalidation", "time_exit"])
-def test_playbook_exits_without_ai_and_keeps_plan_attribution(desk, reason):
+def test_playbook_exits_without_ai_and_keeps_plan_attribution(desk):
+    reason = "underlying_invalidation"
     service, market, analyst, clock = desk
     state = warm(desk)
     assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v1"
     analyst.fail = True
-    if reason == "underlying_invalidation":
-        clock[0] += timedelta(minutes=1)
-        market.latest_underlying = lambda now: {"at": now.isoformat(), "spot": "54900"}
-    else:
-        clock[0] += timedelta(minutes=46)
+    clock[0] += timedelta(minutes=1)
+    market.latest_underlying = lambda now: {"at": now.isoformat(), "spot": "54900"}
     service.run_once()
     status = service.status()
     assert status["session"]["position"] is None
@@ -583,3 +580,18 @@ def test_completed_day_becomes_bounded_next_day_learning_context(desk):
     assert learning["playbook_evidence"][0]["closed_trades"] == 1
     assert learning["playbook_evidence"][0]["evidence_state"] == "collecting"
     assert learning["playbook_evidence"][0]["promotion_eligible"] is False
+
+
+def test_elapsed_holding_deadline_does_not_force_exit(desk):
+    service, market, analyst, clock = desk
+    state = warm(desk)
+    analyst.fail = True
+    with service.store.locked() as connection:
+        current = service.store.latest(connection)
+        current["position"]["exit_deadline"] = clock[0].isoformat()
+        service.store.save(connection, current)
+    clock[0] += timedelta(minutes=46)
+    service._monitor()
+    status = service.status()
+    assert status["session"]["position"]["id"] == state["position"]["id"]
+    assert not any(e["kind"] == "paper_exit" for e in status["events"])

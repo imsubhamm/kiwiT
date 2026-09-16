@@ -522,8 +522,6 @@ class BankNiftyService:
                             if price >= D(current["target"])
                             else "underlying_invalidation"
                             if underlying_exit(current, underlying, now)
-                            else "time_exit"
-                            if current.get("exit_deadline") and now >= datetime.fromisoformat(current["exit_deadline"])
                             else None
                         )
                     )
@@ -626,7 +624,7 @@ class BankNiftyService:
                     "entered_at": now.isoformat(),
                     "entry_plan": plan,
                     "entry_underlying": underlying,
-                    "exit_deadline": (now + timedelta(minutes=plan["max_hold_minutes"])).isoformat(),
+                    "exit_policy": "risk_and_session_only_v2",
                 }
                 state["entries"] += 1
                 self.store.event(
