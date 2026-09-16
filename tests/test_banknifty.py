@@ -583,7 +583,7 @@ def test_completed_day_becomes_bounded_next_day_learning_context(desk):
 
 
 def test_elapsed_holding_deadline_does_not_force_exit(desk):
-    service, market, analyst, clock = desk
+    service, _market, analyst, clock = desk
     state = warm(desk)
     analyst.fail = True
     with service.store.locked() as connection:
@@ -595,3 +595,25 @@ def test_elapsed_holding_deadline_does_not_force_exit(desk):
     status = service.status()
     assert status["session"]["position"]["id"] == state["position"]["id"]
     assert not any(e["kind"] == "paper_exit" for e in status["events"])
+
+
+def test_optional_session_profit_cap_keeps_loss_protection():
+    from kiwit.options_risk import session_limit_reached, trade_limits
+
+    state = {"amount": "100000", "loss_pct": "5", "profit_pct": "10"}
+    assert session_limit_reached(state, D(10000))
+    assert trade_limits(state) == (D(5), D(10))
+    state.update(session_profit_cap_enabled=False, trade_stop_pct="3", trade_target_pct="8")
+    assert not session_limit_reached(state, D(20000))
+    assert not session_limit_reached(state, D(-4999))
+    assert session_limit_reached(state, D(-5000))
+    assert trade_limits(state) == (D(3), D(8))
+
+
+def test_sizing_uses_trade_stop_but_keeps_remaining_session_loss_budget():
+    state = {"amount": "100000", "cash": "100000", "loss_pct": "5", "profit_pct": "10"}
+    original = quantity_for(state, CONTRACT, quote())
+    state["trade_stop_pct"] = "20"
+    assert quantity_for(state, CONTRACT, quote()) < original
+    state["realized_pnl"] = "-5000"
+    assert quantity_for(state, CONTRACT, quote()) == 0

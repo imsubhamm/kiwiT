@@ -6,6 +6,18 @@ from decimal import Decimal as D
 FEE_RATE = D(".002")  # illustrative, not exact statutory fees
 
 
+def trade_limits(state):
+    return (D(state.get("trade_stop_pct", state["loss_pct"])),
+            D(state.get("trade_target_pct", state["profit_pct"])))
+
+
+def session_limit_reached(state, pnl):
+    amount = D(state["amount"])
+    return (pnl <= -amount * D(state["loss_pct"]) / 100 or
+            (state.get("session_profit_cap_enabled", True) and
+             pnl >= amount * D(state["profit_pct"]) / 100))
+
+
 def fees(notional):
     return notional * FEE_RATE + 20
 
@@ -23,7 +35,7 @@ def quantity_for(state, contract, quote):
     risk_budget = min(amount * D(".01"), max(D(0), amount * loss + D(state.get("realized_pnl", "0"))))
     units = min(
         int(max(D(0), allocation - 20) / (fill * (1 + FEE_RATE))),
-        int(max(D(0), risk_budget - 40) / (fill * (loss + 2 * FEE_RATE))),
+        int(max(D(0), risk_budget - 40) / (fill * (D(state.get("trade_stop_pct", state["loss_pct"])) / 100 + 2 * FEE_RATE))),
         quote["ask_size"],
         quote["bid_size"],
         contract["freeze"] - 1,

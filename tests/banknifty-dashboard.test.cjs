@@ -59,10 +59,11 @@ test('Run posts capital and limits once, with no extra approval dialog',async()=
   const {nodes,calls}=setup(); await settle();
   assert.equal(nodes['bn-run'].disabled,false);
   nodes['bn-amount'].value='100000';nodes['bn-loss'].value='5';nodes['bn-profit'].value='10';
+  nodes['bn-trade-stop']={value:'3'}; nodes['bn-trade-target']={value:'8'}; nodes['bn-profit-cap-enabled']={checked:false};
   await nodes['bn-form'].listeners.submit({preventDefault(){}});
   const posts=calls.filter(c=>c.path.endsWith('/run'));
   assert.equal(posts.length,1);
-  assert.deepEqual(JSON.parse(posts[0].options.body),{amount:'100000',loss_pct:'5',profit_pct:'10'});
+  assert.deepEqual(JSON.parse(posts[0].options.body),{amount:'100000',loss_pct:'5',profit_pct:'10',trade_stop_pct:'3',trade_target_pct:'8',session_profit_cap_enabled:false});
 });
 test('flat zero-entry day offers one audited resume',async()=>{
   const {nodes,data,timers}=setup();await settle();

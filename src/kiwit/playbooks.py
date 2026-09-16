@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal as D
 
 from .chart_analysis import VERSION as CHART_VERSION
-from .options_risk import fill_price, quantity_for
+from .options_risk import fill_price, quantity_for, trade_limits
 
 VERSION = "banknifty-selector-v1"
 PLAYBOOKS = (
@@ -166,10 +166,10 @@ def select_plans(snapshot, state, now):
                     "max_fill": str(fill_price(capped, contract, True)),
                     "planned_fill": str(fill),
                     "quantity": qty,
-                    "planned_stop": str(fill * (1 - D(state["loss_pct"]) / 100)),
-                    "planned_target": str(fill * (1 + D(state["profit_pct"]) / 100)),
-                    "loss_pct": state["loss_pct"],
-                    "profit_pct": state["profit_pct"],
+                    "planned_stop": str(fill * (1 - trade_limits(state)[0] / 100)),
+                    "planned_target": str(fill * (1 + trade_limits(state)[1] / 100)),
+                    "loss_pct": str(trade_limits(state)[0]),
+                    "profit_pct": str(trade_limits(state)[1]),
                     "max_hold_minutes": playbook["max_hold_minutes"],
                     "exit_policy": "risk_and_session_only_v2",
                 }
@@ -203,7 +203,7 @@ def validate_plan(decision, snapshot, state, quote, underlying, now):
         raise ValueError("AI decision does not match its entry plan")
     if not datetime.fromisoformat(plan["created_at"]) <= now < datetime.fromisoformat(plan["expires_at"]):
         raise ValueError("Entry plan expired or future-dated")
-    if (D(plan["loss_pct"]), D(plan["profit_pct"])) != (D(state["loss_pct"]), D(state["profit_pct"])):
+    if (D(plan["loss_pct"]), D(plan["profit_pct"])) != (trade_limits(state)[0], trade_limits(state)[1]):
         raise ValueError("Entry plan risk limits changed")
     if not age_ok(underlying.get("at"), now, 120) or datetime.fromisoformat(underlying["at"]) < datetime.fromisoformat(
         snapshot["spot_at"]

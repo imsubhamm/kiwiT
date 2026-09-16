@@ -60,6 +60,12 @@ class PaperSessionRequest(BaseModel):
     profit_pct: Decimal = Field(gt=0, le=100, max_digits=8, decimal_places=4)
 
 
+class BankNiftySessionRequest(PaperSessionRequest):
+    session_profit_cap_enabled: bool = True
+    trade_stop_pct: Decimal | None = Field(default=None, gt=0, le=25, max_digits=8, decimal_places=4)
+    trade_target_pct: Decimal | None = Field(default=None, gt=0, le=100, max_digits=8, decimal_places=4)
+
+
 def _valid_api_key(supplied: str) -> bool:
     expected = os.getenv("KIWIT_API_KEY", "")
     previous = os.getenv("KIWIT_PREVIOUS_API_KEY", "")
@@ -202,14 +208,16 @@ def create_app(
         return service.status()
 
     @app.post('/api/v1/banknifty/run', dependencies=protected)
-    def banknifty_run(body: PaperSessionRequest, request: Request):
+    def banknifty_run(body: BankNiftySessionRequest, request: Request):
         service = request.app.state.banknifty
         if service is None:
             raise HTTPException(503, 'Bank Nifty service unavailable')
         user = request.app.state.auth.authenticate(request.cookies.get('kiwit_session', ''))
         try:
             return service.start(body.amount, body.loss_pct, body.profit_pct,
-                                 user.email if user else 'api-key-operator')
+                                 user.email if user else 'api-key-operator',
+                                 session_profit_cap_enabled=body.session_profit_cap_enabled,
+                                 trade_stop_pct=body.trade_stop_pct, trade_target_pct=body.trade_target_pct)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 

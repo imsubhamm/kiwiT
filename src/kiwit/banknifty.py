@@ -19,7 +19,7 @@ from .chart_analysis import entry_evidence
 from .intraday import IST, SignalMailer
 from .options_ai import DAILY_BUDGET, MODEL, RESERVATION, TRIAL_BUDGET, OpenAIPaperAnalyst, provider_ready
 from .options_market import BankNiftyMarket
-from .options_risk import fees, fill_price
+from .options_risk import fees, fill_price, session_limit_reached, trade_limits
 from .paper_session import validate_limits
 from .playbooks import VERSION as SELECTOR_VERSION
 from .playbooks import catalogue, select_plans, underlying_exit, validate_plan
@@ -204,6 +204,9 @@ class BankNiftyStore:
             "entries": state["entries"],
             "loss_limit_pct": state["loss_pct"],
             "profit_target_pct": state["profit_pct"],
+            "session_profit_cap_enabled": state.get("session_profit_cap_enabled", True),
+            "trade_stop_pct": str(trade_limits(state)[0]),
+            "trade_target_pct": str(trade_limits(state)[1]),
             "outcome": "profit" if realized > 0 else "loss" if realized < 0 else "flat",
             "open_position": (
                 {
@@ -238,16 +241,24 @@ class BankNiftyService:
     def enabled(self):
         return os.getenv("KIWIT_BANKNIFTY_AI_ENABLED", "false").lower() == "true"
 
-    def start(self, amount, loss_pct, profit_pct, actor):
+    def start(self, amount, loss_pct, profit_pct, actor, *, session_profit_cap_enabled=True,
+              trade_stop_pct=None, trade_target_pct=None):
         now = self.clock()
         amount, loss, profit = validate_limits(amount, loss_pct, profit_pct)
+        _, trade_stop, trade_target = validate_limits(
+            amount, loss if trade_stop_pct is None else trade_stop_pct,
+            profit if trade_target_pct is None else trade_target_pct)
+        if not isinstance(session_profit_cap_enabled, bool):
+            raise TypeError("Session profit cap must be a boolean")
         day = str(now.astimezone(IST).date())
         with self.store.locked() as connection:
             old = self.store.latest(connection)
             if old and old["state"] == "completed" and not old["position"]:
                 self.store.finalize_learning(connection, old)
             if old and old["day"] == day:
-                if tuple(map(D, (old["amount"], old["loss_pct"], old["profit_pct"]))) != (amount, loss, profit):
+                if (tuple(map(D, (old["amount"], old["loss_pct"], old["profit_pct"]))) != (amount, loss, profit)
+                        or trade_limits(old) != (trade_stop, trade_target)
+                        or old.get("session_profit_cap_enabled", True) != session_profit_cap_enabled):
                     raise ValueError("Today’s paper limits are immutable")
                 resumable = (
                     old["state"] == "completed"
@@ -283,6 +294,9 @@ class BankNiftyService:
                 "amount": str(amount),
                 "loss_pct": str(loss),
                 "profit_pct": str(profit),
+                "trade_stop_pct": str(trade_stop),
+                "trade_target_pct": str(trade_target),
+                "session_profit_cap_enabled": session_profit_cap_enabled,
                 "cash": str(amount),
                 "realized_pnl": "0",
                 "pnl": "0",
@@ -507,8 +521,8 @@ class BankNiftyService:
                     current["mark"] = str(price)
                     current["mark_at"] = quote["stamp"]
                     current["underlying_check"] = underlying
-                    pnl, amount = D(state["pnl"]), D(state["amount"])
-                    if pnl <= -amount * D(state["loss_pct"]) / 100 or pnl >= amount * D(state["profit_pct"]) / 100:
+                    pnl = D(state["pnl"])
+                    if session_limit_reached(state, pnl):
                         state["state"] = "stopping"
                         state["detail"] = "Session P&L limit triggered"
                     reason = (
@@ -532,12 +546,11 @@ class BankNiftyService:
             if state["position"] is None:
                 state["valuation_fresh"] = True
                 state["pnl"] = state["realized_pnl"]
-                pnl, amount = D(state["pnl"]), D(state["amount"])
+                pnl = D(state["pnl"])
                 if (
                     state["state"] == "stopping"
                     or state["entries"] >= 10
-                    or pnl <= -amount * D(state["loss_pct"]) / 100
-                    or pnl >= amount * D(state["profit_pct"]) / 100
+                    or session_limit_reached(state, pnl)
                 ):
                     state["state"] = "completed"
                     state["detail"] = "Session complete; reconciled flat"
@@ -599,8 +612,8 @@ class BankNiftyService:
                     or not 0 <= (now - datetime.fromisoformat(snapshot["spot_at"])).total_seconds() <= 120
                 ):
                     raise ValueError("Decision or execution quote is stale")
-                pnl, amount = D(state["realized_pnl"]), D(state["amount"])
-                if pnl <= -amount * D(state["loss_pct"]) / 100 or pnl >= amount * D(state["profit_pct"]) / 100:
+                pnl = D(state["realized_pnl"])
+                if session_limit_reached(state, pnl):
                     raise ValueError("Session P&L limit blocks entry")
                 if selected["expiry"] <= state["day"]:
                     raise ValueError("Expiry-day contracts not permitted")
@@ -619,8 +632,8 @@ class BankNiftyService:
                     "entry": str(fill),
                     "entry_cost_per_unit": str(cost / qty),
                     "entry_cost_remaining": str(cost),
-                    "stop": str(fill * (1 - D(state["loss_pct"]) / 100)),
-                    "target": str(fill * (1 + D(state["profit_pct"]) / 100)),
+                    "stop": str(fill * (1 - trade_limits(state)[0] / 100)),
+                    "target": str(fill * (1 + trade_limits(state)[1] / 100)),
                     "entered_at": now.isoformat(),
                     "entry_plan": plan,
                     "entry_underlying": underlying,
@@ -693,6 +706,9 @@ class BankNiftyService:
                     capital=current["amount"],
                     loss_pct=current["loss_pct"],
                     profit_pct=current["profit_pct"],
+                    session_profit_cap_enabled=current.get("session_profit_cap_enabled", True),
+                    trade_stop_pct=str(trade_limits(current)[0]),
+                    trade_target_pct=str(trade_limits(current)[1]),
                     cash=current["cash"],
                     realized_pnl=current["realized_pnl"],
                     entries=current["entries"],
