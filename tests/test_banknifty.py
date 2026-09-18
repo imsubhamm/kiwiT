@@ -378,6 +378,7 @@ def test_stale_feed_and_ai_timeout_do_not_buy(desk):
 
 def test_ai_timeout_sends_an_operational_alert(db, monkeypatch):
     monkeypatch.setenv("KIWIT_BANKNIFTY_AI_ENABLED", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-not-a-real-key")
     market, analyst, clock, mailer = Market(), Analyst(), [NOW], Mailer()
     analyst.fail = True
     service = BankNiftyService(db, None, market=market, analyst=analyst, clock=lambda: clock[0], mailer=mailer)
