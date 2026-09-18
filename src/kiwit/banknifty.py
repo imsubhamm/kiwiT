@@ -68,6 +68,25 @@ class BankNiftyStore:
             (state["day"], kind, json.dumps(detail, default=str)),
         )
 
+    def record_market_snapshot(self, connection, state, snapshot, selection):
+        """Keep an auditable time series separate from decision and trade records."""
+        connection.execute(
+            "INSERT INTO banknifty_market_history("
+            "trading_date,observed_at,spot,market_snapshot,strategy_selection,scan_state) "
+            "VALUES(%s,%s,%s,%s::jsonb,%s::jsonb,%s) "
+            "ON CONFLICT(trading_date,observed_at) DO UPDATE SET "
+            "recorded_at=now(),spot=EXCLUDED.spot,market_snapshot=EXCLUDED.market_snapshot,"
+            "strategy_selection=EXCLUDED.strategy_selection,scan_state=EXCLUDED.scan_state",
+            (
+                state["day"],
+                snapshot["spot_at"],
+                snapshot["spot"],
+                json.dumps(snapshot, default=str),
+                json.dumps(selection, default=str),
+                state["detail"],
+            ),
+        )
+
     def halted(self, connection):
         connection.execute("LOCK TABLE system_halts IN SHARE MODE")
         return connection.execute(
@@ -720,6 +739,7 @@ class BankNiftyService:
                 if not selection["plans"] and not current["position"]:
                     current["detail"] = "No eligible entry plan; waiting for a supported setup"
                 self.store.save(connection, current)
+                self.store.record_market_snapshot(connection, current, snapshot, selection)
                 self.store.event(connection, current, "strategy_scan", selection)
                 recent = connection.execute(
                     "SELECT state,result->'decision' FROM banknifty_ai_calls WHERE trading_date=%s "

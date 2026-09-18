@@ -232,6 +232,23 @@ def test_incomplete_chart_context_blocks_ai_but_is_persisted(desk):
     assert service.status()["session"]["chart_analysis"]["issues"] == ["Missing history"]
 
 
+def test_market_history_is_saved_for_each_observed_candle(db, monkeypatch):
+    monkeypatch.setenv("KIWIT_BANKNIFTY_AI_ENABLED", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-not-a-real-key")
+    market, analyst, clock = Market(), Analyst(), [NOW]
+    service = BankNiftyService(db, None, market=market, analyst=analyst, clock=lambda: clock[0])
+    warm((service, market, analyst, clock))
+    with db.transaction() as connection:
+        row = connection.execute(
+            "SELECT spot,market_snapshot,strategy_selection,scan_state "
+            "FROM banknifty_market_history ORDER BY observed_at DESC LIMIT 1"
+        ).fetchone()
+    assert str(row[0]) == "55000"
+    assert row[1]["candidates"][0]["symbol"] == CONTRACT["symbol"]
+    assert row[2]["plans"]
+    assert row[3] == "Scanning Bank Nifty"
+
+
 @pytest.fixture
 def db():
     url = os.getenv("KIWIT_TEST_DATABASE_URL")
