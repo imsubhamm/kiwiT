@@ -88,26 +88,22 @@ class SignalMailer:
         self.username = os.getenv("KIWIT_SMTP_USERNAME", "")
         self.password = os.getenv("KIWIT_SMTP_PASSWORD", "")
         self.sender = os.getenv("KIWIT_EMAIL_FROM", self.username)
-        self.recipient = os.getenv("KIWIT_ALERT_EMAIL", os.getenv("KIWIT_ADMIN_EMAIL", ""))
+        self.recipients = tuple(
+            address.strip()
+            for address in os.getenv("KIWIT_ALERT_EMAIL", os.getenv("KIWIT_ADMIN_EMAIL", "")).split(",")
+            if address.strip()
+        )
 
     @property
     def configured(self) -> bool:
-        return bool(self.host and self.sender and self.recipient)
+        return bool(self.host and self.sender and self.recipients)
 
-    def send_signal(self, signal: dict[str, Any], dashboard_url: str) -> tuple[str, str]:
-        if not self.configured:
-            return "not_configured", "SMTP environment variables are not configured"
-        message = EmailMessage()
-        message["Subject"] = f"NitiQuant paper signal: {signal['symbol']} {signal['pattern']}"
-        message["From"] = self.sender
-        message["To"] = self.recipient
-        message.set_content(
-            "A new paper-only signal is waiting for review.\n\n"
-            f"Symbol: {signal['symbol']}\nRegime: {signal['regime']}\nPattern: {signal['pattern']}\n"
-            f"Entry: {signal['entry_price']}\nStop: {signal['stop_price']}\nTarget: {signal['target_price']}\n"
-            f"Quantity: {signal['quantity']}\nExpires: {signal['expires_at']}\n\n"
-            f"Review it at {dashboard_url}\n\nNo live broker order will be placed."
-        )
+    @property
+    def recipient(self) -> str:
+        """Compatibility accessor for existing delivery records."""
+        return ", ".join(self.recipients)
+
+    def _send(self, message: EmailMessage) -> tuple[str, str]:
         try:
             client_type = smtplib.SMTP_SSL if self.implicit_tls else smtplib.SMTP
             with client_type(self.host, self.port, timeout=10) as client:
@@ -120,6 +116,40 @@ class SignalMailer:
         except (OSError, smtplib.SMTPException) as error:
             return "failed", f"{type(error).__name__}: email delivery failed"
 
+    def send_signal(self, signal: dict[str, Any], dashboard_url: str) -> tuple[str, str]:
+        if not self.configured:
+            return "not_configured", "SMTP environment variables are not configured"
+        message = EmailMessage()
+        message["Subject"] = f"NitiQuant paper signal: {signal['symbol']} {signal['pattern']}"
+        message["From"] = self.sender
+        message["To"] = ", ".join(self.recipients)
+        message.set_content(
+            "A new paper-only signal is waiting for review.\n\n"
+            f"Symbol: {signal['symbol']}\nRegime: {signal['regime']}\nPattern: {signal['pattern']}\n"
+            f"Entry: {signal['entry_price']}\nStop: {signal['stop_price']}\nTarget: {signal['target_price']}\n"
+            f"Quantity: {signal['quantity']}\nExpires: {signal['expires_at']}\n\n"
+            f"Review it at {dashboard_url}\n\nNo live broker order will be placed."
+        )
+        return self._send(message)
+
+    def send_ai_failure(self, *, occurred_at: datetime, call_id: str, dashboard_url: str) -> tuple[str, str]:
+        """Alert operators when a Bank Nifty AI decision cannot be completed."""
+        if not self.configured:
+            return "not_configured", "SMTP environment variables are not configured"
+        message = EmailMessage()
+        message["Subject"] = "NitiQuant alert: Bank Nifty AI decision failed"
+        message["From"] = self.sender
+        message["To"] = ", ".join(self.recipients)
+        message.set_content(
+            "A Bank Nifty paper-trading AI decision did not complete. No order was placed.\n\n"
+            f"Time: {occurred_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+            f"Call ID: {call_id}\n"
+            "Recorded reason: AI unavailable or returned an incomplete result.\n\n"
+            f"Review the session: {dashboard_url}#banknifty\n\n"
+            "This is a paper-trading operational alert. No live broker order was placed."
+        )
+        return self._send(message)
+
     def send_daily_report(self, report: dict[str, Any], dashboard_url: str) -> tuple[str, str]:
         """Deliver a deterministic paper-session report without exposing credentials."""
         if not self.configured:
@@ -127,7 +157,7 @@ class SignalMailer:
         message = EmailMessage()
         message["Subject"] = f"NitiQuant 3:30 PM paper report · {report['day']} · P&L ₹{report['realized_pnl']}"
         message["From"] = self.sender
-        message["To"] = self.recipient
+        message["To"] = ", ".join(self.recipients)
         counts = report.get("event_counts", {})
         open_position = report.get("open_position")
         position_text = (
@@ -147,17 +177,7 @@ class SignalMailer:
             f"Full audit report: {dashboard_url}#banknifty\n\n"
             "This report is for simulated paper trading. No live broker order was placed."
         )
-        try:
-            client_type = smtplib.SMTP_SSL if self.implicit_tls else smtplib.SMTP
-            with client_type(self.host, self.port, timeout=10) as client:
-                if not self.implicit_tls:
-                    client.starttls()
-                if self.username:
-                    client.login(self.username, self.password)
-                client.send_message(message)
-            return "sent", ""
-        except (OSError, smtplib.SMTPException) as error:
-            return "failed", f"{type(error).__name__}: email delivery failed"
+        return self._send(message)
 
 
 class IntradayService(PaperSessionMixin):

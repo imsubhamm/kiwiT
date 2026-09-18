@@ -758,6 +758,7 @@ class BankNiftyService:
                 self._apply(decision, snapshot, call_id)
             return {"state": "running", "ai_called": bool(call_id)}
         except (BrokerApiError, OSError, TimeoutError, ValueError, ArithmeticError) as error:
+            is_ai_failure = bool(call_id and type(error) is ValueError and str(error).startswith("AI unavailable"))
             with self.store.locked() as connection:
                 current = self.store.latest(connection)
                 detail = str(error) if type(error) is ValueError else "Market data or AI unavailable"
@@ -775,4 +776,10 @@ class BankNiftyService:
                     self.store.event(
                         connection, current, "blocked", {"reason": detail, "call_id": str(call_id) if call_id else None}
                     )
+            if is_ai_failure:
+                self.mailer.send_ai_failure(
+                    occurred_at=self.clock(),
+                    call_id=str(call_id),
+                    dashboard_url=os.getenv("KIWIT_DASHBOARD_URL", "https://kiwit.tathyaforge.in/dashboard"),
+                )
             return {"state": "blocked", "detail": detail}

@@ -319,9 +319,14 @@ class Analyst:
 class Mailer:
     def __init__(self):
         self.reports = []
+        self.ai_failures = []
 
     def send_daily_report(self, report, dashboard_url):
         self.reports.append((report, dashboard_url))
+        return "sent", ""
+
+    def send_ai_failure(self, **alert):
+        self.ai_failures.append(alert)
         return "sent", ""
 
 
@@ -369,6 +374,16 @@ def test_stale_feed_and_ai_timeout_do_not_buy(desk):
     ) == D(".20")
     service.run_once()
     assert analyst.calls == 1
+
+
+def test_ai_timeout_sends_an_operational_alert(db, monkeypatch):
+    monkeypatch.setenv("KIWIT_BANKNIFTY_AI_ENABLED", "true")
+    market, analyst, clock, mailer = Market(), Analyst(), [NOW], Mailer()
+    analyst.fail = True
+    service = BankNiftyService(db, None, market=market, analyst=analyst, clock=lambda: clock[0], mailer=mailer)
+    warm((service, market, analyst, clock))
+    assert len(mailer.ai_failures) == 1
+    assert mailer.ai_failures[0]["call_id"]
     market.fail = True
     clock[0] += timedelta(minutes=5)
     service.run_once()
