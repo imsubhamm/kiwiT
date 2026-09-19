@@ -6,9 +6,9 @@ import io
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .models import NormalizedBar
-
 
 UDIFF_REQUIRED = {"TckrSymb", "SctySrs", "OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol", "TradDt"}
 LEGACY_REQUIRED = {"SYMBOL", "SERIES", "OPEN", "HIGH", "LOW", "CLOSE", "TOTTRDQTY", "TIMESTAMP"}
@@ -37,7 +37,7 @@ def _date(value: str) -> date:
     clean = value.strip()
     for pattern in ("%Y-%m-%d", "%d-%b-%Y", "%d-%m-%Y", "%d-%b-%Y %H:%M:%S"):
         try:
-            return datetime.strptime(clean, pattern).date()
+            return datetime.strptime(clean, pattern).replace(tzinfo=ZoneInfo("Asia/Kolkata")).date()
         except ValueError:
             continue
     raise ValueError(f"unsupported trading date: {value}")
@@ -81,7 +81,7 @@ def parse_index_snapshot(path: str | Path, index_name: str = "NIFTY 50") -> Norm
     with Path(path).open(encoding="utf-8-sig") as stream:
         for row in csv.DictReader(stream):
             if row.get("Index Name", "").strip().upper() == index_name.upper():
-                number = lambda field: float(row[field].replace(",", ""))  # noqa: E731
+                number = lambda field, row=row: float(row[field].replace(",", ""))
                 return NormalizedBar(
                     trading_date=_date(row["Index Date"]), symbol=index_name, series="INDEX",
                     open=number("Open Index Value"), high=number("High Index Value"), low=number("Low Index Value"), close=number("Closing Index Value"),

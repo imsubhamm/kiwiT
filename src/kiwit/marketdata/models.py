@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any
 
 
 class Severity(StrEnum):

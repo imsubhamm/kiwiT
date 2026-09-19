@@ -11,7 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from kiwit.marketdata.models import NormalizedBar
 from kiwit.marketdata.parsers import parse_udiff_equity
-from kiwit.marketdata.reference import InstrumentRecord, MembershipInterval, ObservedTradingCalendar, validate_instruments, validate_membership
+from kiwit.marketdata.reference import (
+    InstrumentRecord,
+    MembershipInterval,
+    ObservedTradingCalendar,
+    validate_instruments,
+    validate_membership,
+)
 from kiwit.marketdata.validation import validate_alignment, validate_bars, validate_freshness
 
 

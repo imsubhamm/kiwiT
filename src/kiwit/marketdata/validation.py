@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from itertools import pairwise
 from statistics import median
 
 from .models import NormalizedBar, Severity, ValidationIssue, ValidationReport
@@ -21,7 +22,7 @@ def validate_bars(name: str, bars: list[NormalizedBar], known_action_dates: set[
         if bar.volume is not None and bar.volume < 0:
             issues.append(ValidationIssue(Severity.ERROR, "NEGATIVE_VOLUME", "volume is negative", bar.trading_date))
     returns = []
-    for previous, current in zip(ordered, ordered[1:]):
+    for previous, current in pairwise(ordered):
         change = current.close / previous.close - 1
         returns.append(abs(change))
         if abs(change) > 0.40 and current.trading_date not in actions:

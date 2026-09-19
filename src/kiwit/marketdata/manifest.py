@@ -14,9 +14,8 @@ class ManifestLog:
         self._lock = threading.Lock()
 
     def append(self, entry: ManifestEntry) -> None:
-        with self._lock:
-            with self.path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(entry.to_json_dict(), sort_keys=True) + "\n")
+        with self._lock, self.path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(entry.to_json_dict(), sort_keys=True) + "\n")
 
     def successful_hashes(self) -> set[str]:
         if not self.path.exists():

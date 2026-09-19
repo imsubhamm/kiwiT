@@ -47,6 +47,15 @@ rollback() {
       systemctl daemon-reload
       systemctl start kiwit-banknifty.timer
     fi
+    for worker in supervisor observer reports; do
+      systemctl stop "kiwit-banknifty-$worker.timer" "kiwit-banknifty-$worker.service" 2>/dev/null || true
+      if [[ -f "$previous_release/deploy/kiwit-banknifty-$worker.service" ]]; then
+        install -m 0644 "$previous_release/deploy/kiwit-banknifty-$worker.service" "/etc/systemd/system/kiwit-banknifty-$worker.service"
+        install -m 0644 "$previous_release/deploy/kiwit-banknifty-$worker.timer" "/etc/systemd/system/kiwit-banknifty-$worker.timer"
+        systemctl daemon-reload
+        systemctl start "kiwit-banknifty-$worker.timer"
+      fi
+    done
     systemctl restart kiwit-api
     systemctl reload nginx
   fi
@@ -58,19 +67,26 @@ install -d -o kiwit -g kiwit -m 0750 "$release_dir"
 tar -xzf "$archive" -C "$release_dir"
 chown -R kiwit:kiwit "$release_dir"
 runuser -u kiwit -- python3 -m venv "$release_dir/.venv"
-runuser -u kiwit -- "$release_dir/.venv/bin/python" -m pip install --disable-pip-version-check "$release_dir[api,production,workflow,research,ml,llm]"
+runuser -u kiwit -- "$release_dir/.venv/bin/python" -m pip install --disable-pip-version-check -c "$release_dir/requirements.lock" "$release_dir[api,production,workflow,research,ml,llm]"
 printf '%s\n' "$release_sha" > "$release_dir/RELEASE_SHA"
 chown kiwit:kiwit "$release_dir/RELEASE_SHA"
 
 set -a
 source /etc/kiwit/kiwit.env
+# This root-only file is never loaded by application services.
+if [[ -f /etc/kiwit/migration.env ]]; then
+  source /etc/kiwit/migration.env
+fi
 set +a
 runuser -u kiwit -- env \
   HOME=/opt/kiwit \
-  KIWIT_DATABASE_URL="$KIWIT_DATABASE_URL" \
+  KIWIT_DATABASE_URL="${KIWIT_MIGRATION_DATABASE_URL:-$KIWIT_DATABASE_URL}" \
   KIWIT_DB_CONNECT_TIMEOUT="${KIWIT_DB_CONNECT_TIMEOUT:-15}" \
   "$release_dir/.venv/bin/python" "$release_dir/scripts/manage_database.py" migrate --migrations "$release_dir/migrations"
 
+if [[ -n ${KIWIT_MIGRATION_DATABASE_URL:-} ]]; then
+  "$release_dir/.venv/bin/python" "$release_dir/scripts/provision_database_roles.py" --refresh-grants
+fi
 if [[ -n $previous_release && -d $previous_release ]]; then
   activated=true
 fi
@@ -87,6 +103,10 @@ chmod 0755 "$release_dir/scripts/run_intraday_worker.py"
 systemctl daemon-reload
 systemctl enable --now kiwit-watchdog.timer
 systemctl enable --now kiwit-intraday.timer
+for worker in supervisor observer reports; do
+  install -m 0644 "$release_dir/deploy/kiwit-banknifty-$worker.service" "/etc/systemd/system/kiwit-banknifty-$worker.service"
+  install -m 0644 "$release_dir/deploy/kiwit-banknifty-$worker.timer" "/etc/systemd/system/kiwit-banknifty-$worker.timer"
+done
 systemctl daemon-reload
 nginx -t
 ln -sfn "$release_dir" /opt/kiwit/current
@@ -107,6 +127,9 @@ for attempt in {1..10}; do
   sleep 2
 done
 systemctl enable --now kiwit-banknifty.timer
+for worker in supervisor observer reports; do
+  systemctl enable --now "kiwit-banknifty-$worker.timer"
+done
 trap - ERR
 find "$release_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf
 echo "deployed $release_id ($release_sha)"

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
+import time
+import urllib.error
 import urllib.request
 from decimal import Decimal
 
@@ -125,57 +129,102 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class AIFailure(ValueError):
+    """Safe, structured operational evidence; never includes provider bodies."""
+
+    def __init__(self, category, *, dispatched=False, http_status=None, request_id=None, latency_ms=0,
+                 completion_status=None):
+        super().__init__("AI decision failed: " + category)
+        self.evidence = {
+            "category": category, "dispatched": dispatched, "http_status": http_status,
+            "request_id": request_id if request_id and re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", request_id) else None,
+            "latency_ms": latency_ms, "completion_status": completion_status,
+            "provider": PROVIDER, "model": MODEL,
+        }
+
+
+def failure_evidence(error):
+    if isinstance(error, AIFailure):
+        return error.evidence
+    # Alternate/test adapters have no trusted dispatch boundary. Assume ambiguous.
+    return AIFailure("timeout" if isinstance(error, TimeoutError) else "adapter_failure", dispatched=True).evidence
+
+
+def provenance():
+    return {
+        "provider": PROVIDER, "model": MODEL, "prompt_version": "banknifty-prompt-v2",
+        "prompt_sha256": hashlib.sha256(PROMPT.encode()).hexdigest(),
+        "schema_sha256": hashlib.sha256(json.dumps(SCHEMA, sort_keys=True).encode()).hexdigest(),
+        "release": os.getenv("KIWIT_RELEASE_SHA", "development"),
+        "exit_policy": "risk_and_session_only_v2", "sizing_version": "options-sizing-v2",
+    }
+
+
 class OpenAIPaperAnalyst:
-    def decide(self, snapshot):
-        if PROVIDER == "tokenharbor":
-            return self._tokenharbor(snapshot)
-        if PROVIDER != "openai":
-            raise ValueError("Unsupported AI provider")
-        key = os.getenv("OPENAI_API_KEY", "").strip()
-        if not key:
-            raise ValueError("OPENAI_API_KEY is missing")
-        request = urllib.request.Request(
-            "https://api.openai.com/v1/responses",
-            data=request_body(snapshot),
-            method="POST",
-            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-        )
-        # No automatic retries: ambiguous failures keep the full durable reservation.
-        # Fixed HTTPS endpoint above; neither user nor model supplies a URL.
-        with urllib.request.urlopen(request, timeout=25) as response:  # nosec B310
-            payload = json.loads(response.read(200_000))
+    def prepare(self, snapshot):
+        """All deterministic checks run before any budget reservation."""
+        if not provider_ready():
+            raise AIFailure("configuration")
         try:
-            return parse_response(payload)
-        except (KeyError, TypeError, AttributeError) as error:
-            raise ValueError("Malformed AI response; no decision accepted") from error
+            if PROVIDER == "openai":
+                return request_body(snapshot)
+            body = json.dumps({"model": MODEL, "messages": [
+                {"role": "system", "content": PROMPT + " Return only JSON matching this schema: " + json.dumps(SCHEMA)},
+                {"role": "user", "content": json.dumps(snapshot, default=str)}],
+                "response_format": {"type": "json_object"}, "max_tokens": 1000, "stream": False}).encode()
+            if len(body) > 20000:
+                raise ValueError("size")
+            return body
+        except (ValueError, TypeError):
+            raise AIFailure("request_validation") from None
 
-
-    def _tokenharbor(self, snapshot):
-        key = os.getenv("TOKENHARBOR_API_KEY", "").strip()
-        if not key:
-            raise ValueError("TokenHarbor credential missing")
-        body = json.dumps({"model": MODEL, "messages": [
-            {"role": "system", "content": PROMPT + " Return only JSON matching this schema: " + json.dumps(SCHEMA)},
-            {"role": "user", "content": json.dumps(snapshot, default=str)}],
-            "response_format": {"type": "json_object"}, "max_tokens": 1000, "stream": False}).encode()
-        if len(body) > 20000:
-            raise ValueError("AI context exceeds request budget")
-        request = urllib.request.Request("https://tokenharbor.ai/v1/chat/completions", data=body,
-            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
-        with urllib.request.build_opener(NoRedirect()).open(request, timeout=25) as response:
-            raw = response.read(200001)
+    def decide(self, snapshot):
+        body = self.prepare(snapshot)
+        key = os.getenv("TOKENHARBOR_API_KEY" if PROVIDER == "tokenharbor" else "OPENAI_API_KEY", "").strip()
+        endpoint = ("https://tokenharbor.ai/v1/chat/completions" if PROVIDER == "tokenharbor"
+                    else "https://api.openai.com/v1/responses")
+        request = urllib.request.Request(endpoint, data=body, method="POST",
+            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+        started, request_id, status = time.monotonic(), None, None
+        def failed(category, http_status=None):
+            return AIFailure(category, dispatched=True, http_status=http_status, request_id=request_id,
+                             latency_ms=round((time.monotonic() - started) * 1000), completion_status=status)
+        try:
+            with urllib.request.build_opener(NoRedirect()).open(request, timeout=25) as response:
+                request_id = response.headers.get("x-request-id")
+                raw = response.read(200001)
+        except urllib.error.HTTPError as error:
+            request_id = error.headers.get("x-request-id") if error.headers else None
+            category = {401: "authentication", 403: "access_denied", 429: "rate_limit_or_quota"}.get(
+                error.code, "provider_http_error")
+            raise failed(category, error.code) from None
+        except (TimeoutError, OSError) as error:
+            timed_out = isinstance(error, TimeoutError) or isinstance(getattr(error, "reason", None), TimeoutError)
+            raise failed("timeout" if timed_out else "transport_error") from None
         if len(raw) > 200000:
-            raise ValueError("AI response exceeds size limit")
+            raise failed("response_too_large")
         try:
             payload = json.loads(raw)
-            choice = payload["choices"][0]
-            if choice["finish_reason"] != "stop" or choice["message"].get("tool_calls"):
-                raise ValueError("Incomplete or tool-bearing response")
-            result, usage = parse_response({"status": "completed", "output": [{"type": "message", "content": [
-                {"type": "output_text", "text": choice["message"]["content"]}]}],
-                "usage": {"input_tokens": payload["usage"]["prompt_tokens"],
-                          "output_tokens": payload["usage"]["completion_tokens"]}})
-            usage.update(provider="tokenharbor", model=payload.get("model"), cost_basis="conservative_internal_budget_not_provider_invoice")
-            return result, usage
-        except (KeyError, TypeError, AttributeError) as error:
-            raise ValueError("Malformed AI response; no decision accepted") from error
+            if PROVIDER == "tokenharbor":
+                choice = payload["choices"][0]
+                status = choice["finish_reason"] if choice["finish_reason"] in {"stop", "length", "content_filter"} else "unknown"
+                if status != "stop" or choice["message"].get("tool_calls"):
+                    raise failed("incomplete_or_tool_response")
+                payload = {"status": "completed", "output": [{"type": "message", "content": [
+                    {"type": "output_text", "text": choice["message"]["content"]}]}],
+                    "usage": {"input_tokens": payload["usage"]["prompt_tokens"],
+                              "output_tokens": payload["usage"]["completion_tokens"]}}
+            else:
+                status = payload.get("status")
+                status = status if status in {"completed", "incomplete", "failed", "cancelled"} else "unknown"
+                if status != "completed":
+                    raise failed("incomplete_response")
+            result, usage = parse_response(payload)
+        except AIFailure:
+            raise
+        except (ValueError, KeyError, TypeError, AttributeError, IndexError, ArithmeticError):
+            raise failed("response_validation") from None
+        usage.update(provenance(), latency_ms=round((time.monotonic() - started) * 1000),
+                     request_sha256=hashlib.sha256(body).hexdigest(),
+                     cost_basis="conservative_internal_budget_not_provider_invoice")
+        return result, usage

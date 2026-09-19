@@ -7,3 +7,5 @@ if ! response=$(curl --fail --silent --show-error --connect-timeout 3 --max-time
   exit 1
 fi
 logger -p daemon.info -t kiwit-watchdog "readiness_ok endpoint=$base_url/ready"
+
+/opt/kiwit/current/.venv/bin/python /opt/kiwit/current/scripts/banknifty_health.py

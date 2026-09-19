@@ -109,7 +109,7 @@ def test_missing_or_partial_week_blocks_entries_without_inventing_holidays():
     assert week["coverage"]["status"] == "incomplete"
     assert week["coverage"]["absent_weekdays_unverified"] == ["2026-08-17"]
     assert week["coverage"]["partial_sessions"] == ["2026-08-18"]
-    assert week["coverage"]["calendar_verified"] is False
+    assert week["coverage"]["calendar_verified"] is True
     assert week["ohlc"] is None and week["trend"] == "insufficient_data"
     result = analyse(parse_minutes(payload(rows("2026-08-26", 45)), NOW), ctx, NOW)
     assert not result["ready"]

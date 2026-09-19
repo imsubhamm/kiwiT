@@ -6,19 +6,32 @@ inference; decisions are revalidated against current session state afterwards.
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import os
 from contextlib import contextmanager
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal as D
 from uuid import uuid4
 
 from .brokers.groww import BrokerApiError
 from .chart_analysis import entry_evidence
 from .intraday import IST, SignalMailer
-from .options_ai import DAILY_BUDGET, MODEL, RESERVATION, TRIAL_BUDGET, OpenAIPaperAnalyst, provider_ready
+from .options_ai import (
+    DAILY_BUDGET,
+    MODEL,
+    RESERVATION,
+    TRIAL_BUDGET,
+    AIFailure,
+    OpenAIPaperAnalyst,
+    failure_evidence,
+    provenance,
+    provider_ready,
+)
+from .options_calendar import regular_session
 from .options_market import BankNiftyMarket
+from .options_operations import diagnostics, heartbeat, report_backlog
 from .options_risk import fees, fill_price, session_limit_reached, trade_limits
 from .paper_session import validate_limits
 from .playbooks import VERSION as SELECTOR_VERSION
@@ -27,18 +40,26 @@ from .playbooks import catalogue, select_plans, underlying_exit, validate_plan
 DESK = "kiwit-banknifty-paper"
 
 
+def experiment_id(state=None):
+    state = state or {}
+    risk = {key: str(state.get(key)) for key in (
+        "amount", "loss_pct", "profit_pct", "trade_stop_pct", "trade_target_pct", "session_profit_cap_enabled")}
+    return hashlib.sha256(json.dumps({**provenance(), "selector": SELECTOR_VERSION, "risk": risk},
+                                     sort_keys=True).encode()).hexdigest()[:20]
+
+
 def fresh(quote, now):
     return quote is not None and 0 <= (now - datetime.fromisoformat(quote["stamp"])).total_seconds() <= 60
 
 
 def entry_window(now):
     local = now.astimezone(IST)
-    return local.weekday() < 5 and time(9, 30) <= local.time() < time(15, 0)
+    return regular_session(local.date()) is True and time(9, 30) <= local.time() < time(15, 0)
 
 
 def market_window(now):
     local = now.astimezone(IST)
-    return local.weekday() < 5 and time(9, 30) <= local.time() < time(15, 30)
+    return regular_session(local.date()) is True and time(9, 30) <= local.time() < time(15, 30)
 
 
 class BankNiftyStore:
@@ -74,9 +95,7 @@ class BankNiftyStore:
             "INSERT INTO banknifty_market_history("
             "trading_date,observed_at,spot,market_snapshot,strategy_selection,scan_state) "
             "VALUES(%s,%s,%s,%s::jsonb,%s::jsonb,%s) "
-            "ON CONFLICT(trading_date,observed_at) DO UPDATE SET "
-            "recorded_at=now(),spot=EXCLUDED.spot,market_snapshot=EXCLUDED.market_snapshot,"
-            "strategy_selection=EXCLUDED.strategy_selection,scan_state=EXCLUDED.scan_state",
+            "ON CONFLICT(trading_date,observed_at) DO NOTHING",
             (
                 state["day"],
                 snapshot["spot_at"],
@@ -102,6 +121,14 @@ class BankNiftyStore:
             if self.halted(connection):
                 return None
             day = state["day"]
+            failures = connection.execute(
+                "SELECT state,snapshot->>'at' FROM banknifty_ai_calls WHERE trading_date=%s "
+                "ORDER BY slot DESC LIMIT 3", (day,)).fetchall()
+            if (len(failures) == 3 and all(row[0] == "failed" for row in failures)
+                    and failures[0][1] and now < datetime.fromisoformat(failures[0][1]) + timedelta(minutes=15)):
+                state["detail"] = "AI circuit open after three failures; retry after 15 minutes; exits remain active"
+                self.save(connection, state)
+                return None
             used, today = connection.execute(
                 "SELECT COALESCE(sum(reserved_usd),0),COALESCE(sum(reserved_usd) "
                 "FILTER(WHERE trading_date=%s),0) FROM banknifty_ai_calls",
@@ -119,33 +146,30 @@ class BankNiftyStore:
             ).fetchone()
             return call_id if row else None
 
-    def settle(self, call_id, decision, usage):
+    def settle(self, call_id, decision, usage, failure=None):
         with self.locked() as connection:
             connection.execute(
                 "UPDATE banknifty_ai_calls SET state=%s,reserved_usd=%s,result=%s::jsonb WHERE call_id=%s",
                 (
                     "completed" if decision else "failed",
-                    D(usage["budget_charge_usd"]) if usage else RESERVATION,
-                    json.dumps({"decision": decision, "usage": usage}),
+                    D(usage["budget_charge_usd"]) if usage else (D(0) if failure and not failure["dispatched"] else RESERVATION),
+                    json.dumps({"decision": decision, "usage": usage, "failure": failure}),
                     call_id,
                 ),
             )
 
-    def learning_context(self, connection, before_day):
+    def learning_context(self, connection, before_day, state=None):
         rows = connection.execute(
-            "WITH trades AS (SELECT detail->>'position_id' position_id,detail->>'playbook_id' playbook_id,"
-            "sum((detail->>'pnl')::numeric) pnl,max((detail->>'capital')::numeric) capital,"
-            "bool_or((detail->>'closed')::boolean) closed FROM banknifty_events WHERE kind='paper_exit' "
-            "AND trading_date<%s AND detail ? 'position_id' AND detail ? 'capital' "
-            "GROUP BY detail->>'position_id',detail->>'playbook_id') "
             "SELECT playbook_id,count(*),count(*) FILTER(WHERE pnl>0),sum(pnl),"
-            "avg(pnl/nullif(capital,0)*100) FROM trades WHERE closed GROUP BY playbook_id",
-            (before_day,),
+            "avg(pnl/nullif(capital,0)*100) FROM banknifty_trade_outcomes "
+            "WHERE closed AND NOT recovery AND session_day<%s "
+            "AND experiment_id=%s GROUP BY playbook_id",
+            (before_day, experiment_id(state)),
         ).fetchall()
         days = connection.execute(
-            "SELECT trading_date,summary FROM banknifty_learning_days WHERE trading_date<%s "
-            "ORDER BY trading_date DESC LIMIT 10",
-            (before_day,),
+            "SELECT session_day,jsonb_build_object('realized_pnl',sum(pnl)::text,'entries',count(*),'training',false,'final_state','reconciled_flat') "
+            "FROM banknifty_trade_outcomes WHERE closed AND NOT recovery AND session_day<%s AND experiment_id=%s "
+            "GROUP BY session_day ORDER BY session_day DESC LIMIT 10", (before_day, experiment_id(state))
         ).fetchall()
         return {
             "version": "banknifty-learning-v1",
@@ -206,10 +230,16 @@ class BankNiftyStore:
             "SELECT kind,count(*) FROM banknifty_events WHERE trading_date=%s GROUP BY kind", (state["day"],)
         ).fetchall()
         event_counts = {kind: count for kind, count in counts}
+        recovery = connection.execute(
+            "SELECT count(*),COALESCE(sum(pnl),0) FROM banknifty_trade_outcomes WHERE session_day=%s AND recovery",
+            (state["day"],)).fetchone()
         realized = D(state["realized_pnl"])
         capital = D(state["amount"])
         report = {
-            "version": "banknifty-daily-report-v1",
+            "version": "banknifty-daily-report-v2",
+            "recovery_trades": recovery[0], "recovery_pnl": str(recovery[1]),
+            "intraday_comparable": recovery[0] == 0 and state["position"] is None,
+            "generated_late": str(now.astimezone(IST).date()) != state["day"],
             "day": state["day"],
             "generated_at": now.isoformat(),
             "cutoff": "15:30 Asia/Kolkata",
@@ -302,8 +332,8 @@ class BankNiftyService:
                 return old
             if old and (old["position"] or old["state"] != "completed"):
                 raise ValueError("Previous Bank Nifty session must be reconciled first")
-            if now.astimezone(IST).weekday() >= 5 or now.astimezone(IST).time() >= time(15):
-                raise ValueError("Start on a weekday before 15:00 IST")
+            if regular_session(now.astimezone(IST).date()) is not True or now.astimezone(IST).time() >= time(15):
+                raise ValueError("Start on a verified regular NSE session before 15:00 IST")
             if not self.enabled or not provider_ready() or self.market is None:
                 raise ValueError("Bank Nifty AI worker/key/read-only feed is not configured")
             if self.store.halted(connection):
@@ -330,7 +360,8 @@ class BankNiftyService:
                 "last_exit": None,
                 "execution": "paper-only",
                 "model": MODEL,
-                "version": "banknifty-ai-v4-playbooks",
+                "version": "banknifty-ai-v5-operations",
+                "provenance": provenance(),
                 "last_tick": None,
             }
             self.store.save(connection, state)
@@ -361,17 +392,12 @@ class BankNiftyService:
                 "SELECT created_at,state,result FROM banknifty_ai_calls ORDER BY created_at DESC LIMIT 10"
             ).fetchall()
             review = connection.execute(
-                "WITH trades AS (SELECT detail->>'position_id' AS position_id, "
-                "detail->>'playbook_id' AS playbook_id, sum((detail->>'pnl')::numeric) AS pnl, "
-                "bool_or((detail->>'closed')::boolean) AS closed FROM banknifty_events "
-                "WHERE kind='paper_exit' AND detail ? 'position_id' "
-                "GROUP BY detail->>'position_id',detail->>'playbook_id') "
-                "SELECT playbook_id,count(*) FILTER(WHERE closed), "
-                "count(*) FILTER(WHERE closed AND pnl>0), "
-                "COALESCE(sum(pnl) FILTER(WHERE closed),0),sum(pnl),count(*) FILTER(WHERE NOT closed) "
-                "FROM trades GROUP BY playbook_id"
+                "SELECT playbook_id,experiment_id,count(*) FILTER(WHERE closed), "
+                "count(*) FILTER(WHERE closed AND pnl>0),COALESCE(sum(pnl) FILTER(WHERE closed),0),"
+                "sum(pnl),count(*) FILTER(WHERE NOT closed) FROM banknifty_trade_outcomes "
+                "WHERE NOT recovery GROUP BY playbook_id,experiment_id"
             ).fetchall()
-            learning = self.store.learning_context(connection, "9999-12-31")
+            learning = self.store.learning_context(connection, "9999-12-31", state)
             reports = connection.execute(
                 "SELECT trading_date,generated_at,report,delivery_status,delivery_attempts,"
                 "delivery_attempted_at,delivery_error FROM banknifty_daily_reports "
@@ -380,19 +406,21 @@ class BankNiftyService:
         return {
             "available": self.enabled and self.market is not None and provider_ready(),
             "execution": "paper-only",
+            "operations": diagnostics(self.store, self.clock()),
             "model": MODEL,
             "selector_version": SELECTOR_VERSION,
             "playbooks": catalogue(),
             "paper_review": [
                 {
                     "playbook_id": p,
+                    "experiment_id": experiment,
                     "closed_trades": n,
                     "winning_trades": w,
                     "closed_net_pnl": str(net),
                     "realized_pnl_including_partial": str(total),
                     "partially_exited_trades": partial,
                 }
-                for p, n, w, net, total, partial in review
+                for p, experiment, n, w, net, total, partial in review
             ],
             "learning": learning,
             "daily_reports": [
@@ -420,36 +448,19 @@ class BankNiftyService:
             "decisions": [{"at": str(at), "state": status, "result": result} for at, status, result in calls],
         }
 
+    @property
+    def dashboard_url(self):
+        return os.getenv("KIWIT_DASHBOARD_URL", "https://kiwit.tathyaforge.in/dashboard")
+
     def _process_daily_report(self, state, now):
-        local = now.astimezone(IST)
-        if not state or local.time() < time(15, 30) or state["day"] != str(local.date()):
-            return None
-        with self.store.locked() as connection:
-            current = self.store.latest(connection)
-            if not current or current["day"] != state["day"]:
-                return None
-            report = self.store.daily_report(connection, current, now)
-            delivery = report["delivery"]
-            should_send = delivery["status"] != "sent" and delivery["attempts"] < 3
-        if not should_send:
-            return report
-        status, error = self.mailer.send_daily_report(
-            report, os.getenv("KIWIT_DASHBOARD_URL", "https://kiwit.tathyaforge.in/dashboard")
-        )
-        with self.store.locked() as connection:
-            connection.execute(
-                "UPDATE banknifty_daily_reports SET delivery_status=%s,delivery_attempts=delivery_attempts+1,"
-                "delivery_attempted_at=%s,delivery_error=%s WHERE trading_date=%s AND delivery_status<>'sent'",
-                (status, now, error[:500], state["day"]),
-            )
-            current = self.store.latest(connection)
-            if current:
-                self.store.event(connection, current, "daily_report_delivery", {"status": status, "error": error[:200]})
-        return report
+        return report_backlog(self, now)
 
     def _close(self, connection, state, quote, reason, now):
         position = state["position"]
         if not position or not market_window(now) or not fresh(quote, now):
+            return False
+        if position["contract"]["expiry"] < str(now.astimezone(IST).date()):
+            state["detail"] = "Expired residual position requires verified settlement reconciliation"
             return False
         if position.get("last_exit_quote") == quote["stamp"]:
             return False
@@ -487,6 +498,10 @@ class BankNiftyService:
                 "position_id": position["id"],
                 "playbook_id": position.get("entry_plan", {}).get("playbook_id", "legacy_unattributed"),
                 "closed": position["quantity"] == 0,
+                "entered_at": position["entered_at"], "exited_at": now.isoformat(),
+                "holding_seconds": (now - datetime.fromisoformat(position["entered_at"])).total_seconds(),
+                "recovery": state["day"] != str(now.astimezone(IST).date()),
+                "experiment_id": position.get("experiment_id", "legacy-unbound"),
             },
         )
         if not position["quantity"]:
@@ -654,6 +669,8 @@ class BankNiftyService:
                     "stop": str(fill * (1 - trade_limits(state)[0] / 100)),
                     "target": str(fill * (1 + trade_limits(state)[1] / 100)),
                     "entered_at": now.isoformat(),
+                    "experiment_id": snapshot["experiment_id"],
+                    "provenance": snapshot["provenance"],
                     "entry_plan": plan,
                     "entry_underlying": underlying,
                     "exit_policy": "risk_and_session_only_v2",
@@ -673,8 +690,53 @@ class BankNiftyService:
                 )
             self.store.save(connection, state)
 
+    def observe(self):
+        """Read-only market tape; requires no RUN consent and never invokes AI."""
+        now = self.clock()
+        local = now.astimezone(IST)
+        if (not self.market or regular_session(local.date()) is not True
+                or not time(9, 20) <= local.time() <= time(15, 30)):
+            return {"state": "market_closed"}
+        try:
+            with self.store.locked() as connection:
+                row = connection.execute(
+                    "SELECT market_snapshot->'chart_cache' FROM banknifty_market_history "
+                    "WHERE trading_date=%s AND scan_state='live_observation' ORDER BY observed_at DESC LIMIT 1",
+                    (local.date(),)).fetchone()
+            snapshot = (self.market.snapshot(now, cached_context=row[0] if row else None)
+                        if isinstance(self.market, BankNiftyMarket) else self.market.snapshot(now))
+            snapshot["provenance"] = provenance()
+            with self.store.locked() as connection:
+                self.store.record_market_snapshot(connection,
+                    {"day": str(local.date()), "detail": "live_observation"}, snapshot,
+                    {"version": SELECTOR_VERSION, "plans": [], "evaluations": [], "mode": "observation_only"})
+            heartbeat(self.store, "observer", self.clock(), "ok", {"spot_at": snapshot["spot_at"]})
+            return {"state": "observed"}
+        except (OSError, ValueError, ArithmeticError, BrokerApiError):
+            heartbeat(self.store, "observer", self.clock(), "failed", {"reason": "MARKET_SNAPSHOT_UNAVAILABLE"})
+            return {"state": "unavailable"}
+
+    def observed_snapshot(self, now):
+        with self.store.locked() as connection:
+            row = connection.execute(
+                "SELECT market_snapshot FROM banknifty_market_history WHERE trading_date=%s "
+                "AND scan_state='live_observation' ORDER BY observed_at DESC LIMIT 1",
+                (now.astimezone(IST).date(),)).fetchone()
+        if not row or not 0 <= (now-datetime.fromisoformat(row[0]["spot_at"])).total_seconds() <= 120:
+            raise ValueError("Independent observer snapshot missing or stale")
+        return row[0]
+
+    def supervise(self):
+        try:
+            state = self._monitor()
+            heartbeat(self.store, "supervisor", self.clock(), "ok")
+            return state
+        except Exception:
+            heartbeat(self.store, "supervisor", self.clock(), "failed")
+            raise
+
     def run_once(self):
-        state = self._monitor()  # exits do not depend on model availability or remaining API credit
+        state = self.supervise()  # exits do not depend on model availability or remaining API credit
         now = self.clock()
         self._process_daily_report(state, now)
         if not state or state["state"] != "running" or not self.enabled or not entry_window(now):
@@ -682,7 +744,7 @@ class BankNiftyService:
         call_id = None
         try:
             snapshot = (
-                self.market.snapshot(now, cached_context=state.get("chart_cache"))
+                self.observed_snapshot(now)
                 if isinstance(self.market, BankNiftyMarket)
                 else self.market.snapshot(now)
             )
@@ -719,6 +781,7 @@ class BankNiftyService:
                 )
                 self.store.save(connection, current)
                 snapshot.update(
+                    experiment_id=experiment_id(current), provenance=provenance(),
                     day=current["day"],
                     history=current["history"],
                     position=current["position"],
@@ -732,7 +795,7 @@ class BankNiftyService:
                     realized_pnl=current["realized_pnl"],
                     entries=current["entries"],
                 )
-                snapshot["learning_context"] = self.store.learning_context(connection, current["day"])
+                snapshot["learning_context"] = self.store.learning_context(connection, current["day"], current)
                 selection = select_plans(snapshot, current, now)
                 current["strategy_selection"] = selection
                 snapshot["strategy_selection"] = selection
@@ -767,21 +830,31 @@ class BankNiftyService:
             times = [datetime.fromisoformat(item["at"]) for item in snapshot["history"][-5:]]
             if any(not 0 < (b - a).total_seconds() <= 120 for a, b in itertools.pairwise(times)):
                 raise ValueError("Underlying history has gaps")
+            if hasattr(self.analyst, "prepare"):
+                body = self.analyst.prepare(snapshot)
+                # Body hash is written alongside the reserved input, not added to the prompt recursively.
+                request_hash = hashlib.sha256(body).hexdigest()
+            else:
+                request_hash = None
             call_id = self.store.reserve(self.clock(), snapshot)
             if call_id:
                 try:
                     decision, usage = self.analyst.decide(snapshot)
-                except (OSError, TimeoutError, ValueError, ArithmeticError):
-                    self.store.settle(call_id, None, None)
-                    raise ValueError("AI unavailable/incomplete; no order, reservation retained") from None
+                except (OSError, TimeoutError, ValueError, ArithmeticError) as error:
+                    failure = failure_evidence(error)
+                    failure["request_sha256"] = request_hash
+                    self.store.settle(call_id, None, None, failure)
+                    typed = AIFailure(failure["category"], dispatched=failure["dispatched"])
+                    typed.evidence = failure
+                    raise typed from None
                 self.store.settle(call_id, decision, usage)
                 self._apply(decision, snapshot, call_id)
             return {"state": "running", "ai_called": bool(call_id)}
         except (BrokerApiError, OSError, TimeoutError, ValueError, ArithmeticError) as error:
-            is_ai_failure = bool(call_id and type(error) is ValueError and str(error).startswith("AI unavailable"))
+            is_ai_failure = bool(call_id and isinstance(error, AIFailure))
             with self.store.locked() as connection:
                 current = self.store.latest(connection)
-                detail = str(error) if type(error) is ValueError else "Market data or AI unavailable"
+                detail = str(error) if isinstance(error, (ValueError, AIFailure)) else "Market data or AI unavailable"
                 if call_id:
                     connection.execute(
                         "UPDATE banknifty_ai_calls SET state='rejected', "
@@ -797,9 +870,12 @@ class BankNiftyService:
                         connection, current, "blocked", {"reason": detail, "call_id": str(call_id) if call_id else None}
                     )
             if is_ai_failure:
-                self.mailer.send_ai_failure(
+                delivery, _delivery_error = self.mailer.send_ai_failure(
                     occurred_at=self.clock(),
                     call_id=str(call_id),
                     dashboard_url=os.getenv("KIWIT_DASHBOARD_URL", "https://kiwit.tathyaforge.in/dashboard"),
                 )
+                with self.store.locked() as connection:
+                    connection.execute("UPDATE banknifty_ai_calls SET result=jsonb_set(result,'{alert_delivery}',%s::jsonb) "
+                                       "WHERE call_id=%s", (json.dumps(delivery), call_id))
             return {"state": "blocked", "detail": detail}

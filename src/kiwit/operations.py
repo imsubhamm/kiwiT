@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import date
+from collections.abc import Iterable
+from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any
+from zoneinfo import ZoneInfo
 
 
 def build_operational_report(
@@ -26,7 +28,7 @@ def build_operational_report(
         curve.append({"date": trading_date.isoformat(), "equity": str(equity), "drawdown_pct": str(round(drawdown, 4))})
     if not curve:
         equity = cash_balance + realized_pnl
-        curve.append({"date": date.today().isoformat(), "equity": str(equity), "drawdown_pct": "0"})
+        curve.append({"date": datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat(), "equity": str(equity), "drawdown_pct": "0"})
     incidents = [
         {"type": code, "scope": scope, "message": reason, "active": active,
          "opened_at": opened.isoformat(), "closed_at": closed.isoformat() if closed else None}

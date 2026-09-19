@@ -169,7 +169,7 @@ def run_backtest(
         "total_return_pct": float((curve_frame["equity"].iloc[-1] / initial_equity - 1) * 100),
         "cagr_pct": float(((curve_frame["equity"].iloc[-1] / initial_equity) ** (1 / years) - 1) * 100),
         "max_drawdown_pct": float(drawdown.min() * 100),
-        "trade_count": int(len(trade_frame)),
+        "trade_count": len(trade_frame),
         "win_rate_pct": float((trade_frame["pnl"] > 0).mean() * 100) if len(trade_frame) else 0.0,
         "sharpe_annualized": float(np.sqrt(252) * returns.mean() / returns.std()) if returns.std() else 0.0,
         "cost_bps_each_side": cost_bps_each_side,

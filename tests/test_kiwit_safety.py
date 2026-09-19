@@ -23,9 +23,9 @@ class SafetyTests(unittest.TestCase):
 
     def test_paper_broker_rejects_duplicate_proposal(self):
         instrument = Instrument("NIFTYBEES")
-        proposal = TradeProposal("baseline", "1", instrument, Side.BUY, datetime.now(UTC), Decimal("250"), Decimal("245"), None)
-        risk = RiskDecision(Decision.APPROVE, proposal.proposal_id, 10, Decimal("50"), Decimal("50"), ())
-        quote = Quote(instrument, datetime.now(UTC), Decimal("249.95"), Decimal("250.05"), Decimal("250"))
+        proposal = TradeProposal("baseline", "1", instrument, Side.BUY, datetime.now(UTC), Decimal(250), Decimal(245), None)
+        risk = RiskDecision(Decision.APPROVE, proposal.proposal_id, 10, Decimal(50), Decimal(50), ())
+        quote = Quote(instrument, datetime.now(UTC), Decimal("249.95"), Decimal("250.05"), Decimal(250))
         broker = PaperBroker()
         broker.execute(proposal, risk, quote)
         with self.assertRaises(ValueError):

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import product
-from typing import Callable
 
 import numpy as np
 import pandas as pd
 
 from .baselines import BaselineResult, _simulate, donchian_baseline, ema_baseline
-
 
 StrategyFn = Callable[[pd.DataFrame, float, float], BaselineResult]
 
@@ -120,7 +119,7 @@ def fixed_walk_forward(data: pd.DataFrame, runner: StrategyFn, cost_bps: float =
             "cagr_pct": float(((1 + total_return) ** (1 / years) - 1) * 100),
             "max_drawdown_pct": float(drawdown.min() * 100),
             "sharpe_annualized": float(np.sqrt(252) * daily.mean() / daily.std()) if daily.std() else 0.0,
-            "trade_count": int(len(trades)),
+            "trade_count": len(trades),
             "win_rate_pct": float((trades.pnl > 0).mean() * 100) if len(trades) else 0.0,
             "profit_factor": float(gains / losses) if losses else float("inf"),
             "cost_bps_each_side": cost_bps,

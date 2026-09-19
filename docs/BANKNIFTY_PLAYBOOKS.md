@@ -1,7 +1,7 @@
-# Bank Nifty paper selector v1
+# Bank Nifty paper selector v2
 
-Implementation: `banknifty-selector-v1`; sessions created by this release use
-`banknifty-ai-v4-playbooks`. All four playbooks are **unvalidated paper experiments**.
+Implementation: `banknifty-selector-v2`; sessions created by this release use
+`banknifty-ai-v5-operations`. All four playbooks are **unvalidated paper experiments**.
 This is not promotion of the rejected cash router or permission for broker orders.
 No new strategy is invented or automatically promoted each morning.
 
@@ -9,12 +9,12 @@ No new strategy is invented or automatically promoted each morning.
 
 | Versioned playbook | Existing completed 5m setup | Required 5m and 15m regimes | Maximum hold |
 | --- | --- | --- | --- |
-| opening_range_breakout_v1 | First 15m range breakout | Both match direction | 45 minutes |
-| breakout_retest_v1 | Prior 20-bar breakout and retest | Both match direction | 45 minutes |
-| trend_pullback_v1 | EMA9 pullback and directional close | Both match direction | 45 minutes |
-| range_reversal_v1 | Rejection back inside the prior 20-bar range | Both range | 30 minutes |
+| opening_range_breakout_v1 | First 15m range breakout | Both match direction | No fixed deadline |
+| breakout_retest_v1 | Prior 20-bar breakout and retest | Both match direction | No fixed deadline |
+| trend_pullback_v1 | EMA9 pullback and directional close | Both match direction | No fixed deadline |
+| range_reversal_v1 | Rejection back inside the prior 20-bar range | Both range | No fixed deadline |
 
-See CHART_ANALYSIS.md for exact setup formulas. The weekly context must be complete;
+See CHART_ANALYSIS.md for exact setup formulas. The weekly context must cover all expected regular sessions in the versioned NSE calendar;
 an opposing directional weekly bias rejects the direction. Mixed/range weekly
 context is allowed. Missing/stale evidence, unsupported regimes and no pattern
 produce an explicit wait reason. Hammer/engulfing shapes alone do not qualify.
@@ -63,7 +63,7 @@ means no paid AI call; an open position still permits AI HOLD/EXIT decisions.
 
 Independent premium stops, session limits and EOD exits remain. New positions also
 exit on a fresh post-entry completed underlying candle crossing plan invalidation,
-or their holding deadline. Underlying-feed failure does not disable premium/time
+with no fixed holding deadline. Underlying-feed failure does not disable premium/time
 exits; executable option quotes are still required. Monitoring is minute-based,
 not tick-level or guaranteed instantaneous. Broker mutation methods remain disabled.
 Legacy positions without a plan retain their original exit behavior.
@@ -116,3 +116,5 @@ This is controlled retrieval-based learning, not training.
 The design follows official OpenAI guidance to make changes incrementally and
 re-evaluate them on representative evidence rather than assuming improvement:
 https://developers.openai.com/api/docs/guides/latest-model
+
+Current operations and recovery semantics: [OPTIONS_OPERATIONS.md](OPTIONS_OPERATIONS.md).

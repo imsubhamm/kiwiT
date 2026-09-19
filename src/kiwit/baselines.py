@@ -74,7 +74,7 @@ def _simulate(data: pd.DataFrame, entry_signal: pd.Series, exit_signal: pd.Serie
         "cagr_pct": float(((1 + total_return) ** (1 / years) - 1) * 100),
         "max_drawdown_pct": float(drawdown.min() * 100),
         "sharpe_annualized": float(sqrt(252) * daily.mean() / daily.std()) if daily.std() else 0.0,
-        "trade_count": int(len(trade_frame)),
+        "trade_count": len(trade_frame),
         "win_rate_pct": float((trade_frame.pnl > 0).mean() * 100) if len(trade_frame) else 0.0,
         "profit_factor": float(gains / losses) if losses else float("inf"),
         "exposure_pct": float(exposure_days / len(data) * 100),

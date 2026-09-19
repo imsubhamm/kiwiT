@@ -1,0 +1,11 @@
+[Unit]
+Description=Bank Nifty reports
+
+[Timer]
+OnCalendar=*-*-* *:00/15:00 Asia/Kolkata
+Persistent=true
+AccuracySec=1s
+Unit=kiwit-banknifty-reports.service
+
+[Install]
+WantedBy=timers.target

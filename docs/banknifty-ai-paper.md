@@ -56,7 +56,7 @@ input snapshots are in `banknifty_ai_calls`; session/fills in `banknifty_events`
 The selector now supplies explicit versioned entry plans for opening-range breakout,
 breakout/retest, trend pullback and range reversal. The AI chooses a supplied plan
 or waits; execution independently rechecks the current underlying and option prices.
-New positions also carry underlying invalidation and time exits. The dashboard
+New positions also carry underlying invalidation exits. The dashboard
 shows eligibility reasons, plans, rejected decisions and partial-fill-aware paper
 results per playbook. See [BANKNIFTY_PLAYBOOKS.md](BANKNIFTY_PLAYBOOKS.md) for the
 exact routing/entry rules and remaining historical-options validation requirements.
@@ -68,7 +68,7 @@ No eligible plan while flat means no paid AI call. Existing exits still run.
 - Entries 09:30–15:00 IST, flatten from 15:15, no fills at/after 15:30.
 - At or immediately after 15:30 IST the worker creates one immutable daily paper report,
   stores it in PostgreSQL, displays it on the dashboard and attempts email delivery.
-  Delivery is idempotent and retried up to three worker ticks. If a fresh executable
+  Delivery uses a durable claim lease and retries after 15 minutes; SMTP is at-least-once. If a fresh executable
   quote was unavailable, the report explicitly marks the position unresolved instead
   of inventing a closing fill.
 - Max 10 entries, 25% premium allocation, 1% initial capital at planned stop.
@@ -77,7 +77,7 @@ No eligible plan while flat means no paid AI call. Existing exits still run.
   20bps + ₹20 per fill fees. These are NOT exact options brokerage/tax calculations.
 - Displayed depth limits quantity; partial exits persist. No stale or invented fills.
 - Five-minute cooldown after exits, immutable daily limits, durable stop/restart state.
-- Holidays have no explicit calendar yet: stale candles/quotes block trading.
+- Regular-session holidays use the versioned 2026 NSE F&O calendar; unknown years block entries.
   Groww's index quote was verified to lack a trade timestamp. Instead, the adapter
   uses its documented `/v1/historical/candles` endpoint and completed candle close
   times, never receipt time. During-market freshness still needs a forward check.
@@ -97,3 +97,5 @@ At documented $2/$12 per million rates the estimated generation charge is $0.001
 before any cache effects/taxes; conservative trial accounting equivalent is $0.00253.
 This was a connectivity check outside the session ledger, not a trade or performance
 test. No trading session was started. The $2 buffer covers this small setup call.
+
+See [OPTIONS_OPERATIONS.md](OPTIONS_OPERATIONS.md) for independent observation/supervision, recovery classification and delivery catch-up.
