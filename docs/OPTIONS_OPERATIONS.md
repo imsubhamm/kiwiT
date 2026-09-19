@@ -17,7 +17,9 @@ release. Live broker orders remain disabled. No provider/model change is made.
 - Watchdog: checks the options worker heartbeats and operational blockers as well as
   web readiness. Authenticated operations readiness and the dashboard expose them.
 
-Annual regular-session calendar: NSE F&O circular FAOP71777, 2026. Source:
+Annual regular-session calendar: NSE F&O circular FAOP71777, 2026, with
+January 15 closure from amendment FAOP72262
+(https://nsearchives.nseindia.com/content/circulars/FAOP72262.pdf). Source:
 https://nsearchives.nseindia.com/content/circulars/FAOP71777.pdf . Unknown years block
 entry; add the verified next-year calendar before year-end. Special-session times
 must be implemented and reviewed before trading those sessions. Review exchange
@@ -58,7 +60,9 @@ root-only `/etc/kiwit/migration.env`; services never source that file. The deplo
 script refreshes runtime grants after migrations when the owner URL is configured.
 Validate login, session writes, halts, workers, migrations and rollback before release.
 
-All deployment packages are constrained by `requirements.lock`, shared with CI.
+Deployment packages are constrained by `requirements.lock`. The CI workflow update
+is preserved in `docs/audits/2026-09-19-workflow-update.patch`; applying it needs a
+GitHub credential with workflow scope. The current credential cannot modify Actions files.
 Migrations are additive; older code ignores the new columns/view/table. Rollback
 restores or stops the new worker units along with the application. No historical
 performance or database role is silently modified by an application import.
