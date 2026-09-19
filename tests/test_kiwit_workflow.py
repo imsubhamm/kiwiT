@@ -18,9 +18,9 @@ from kiwit.workflow import PaperTradingWorkflow, WorkflowState
 class WorkflowTests(unittest.TestCase):
     def test_risk_human_and_paper_execution_gates(self):
         instrument = Instrument("NIFTYBEES")
-        proposal = TradeProposal("baseline", "1", instrument, Side.BUY, datetime.now(UTC), Decimal("250"), Decimal("245"), None)
-        quote = Quote(instrument, datetime.now(UTC), Decimal("249.95"), Decimal("250.05"), Decimal("250"))
-        portfolio = PortfolioSnapshot(Decimal("1000000"), Decimal("1000000"))
+        proposal = TradeProposal("baseline", "1", instrument, Side.BUY, datetime.now(UTC), Decimal(250), Decimal(245), None)
+        quote = Quote(instrument, datetime.now(UTC), Decimal("249.95"), Decimal("250.05"), Decimal(250))
+        portfolio = PortfolioSnapshot(Decimal(1000000), Decimal(1000000))
         with tempfile.TemporaryDirectory() as temp:
             audit = HashChainAuditLog(Path(temp) / "audit.jsonl")
             workflow = PaperTradingWorkflow(RiskEngine(load_config("config/kiwit.toml").risk), PaperBroker(), audit)

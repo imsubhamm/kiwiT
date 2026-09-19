@@ -1,0 +1,13 @@
+[Unit]
+Description=Bank Nifty supervisor
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:20..59:00 Asia/Kolkata
+OnCalendar=Mon..Fri *-*-* 10..14:*:00 Asia/Kolkata
+OnCalendar=Mon..Fri *-*-* 15:00..30:00 Asia/Kolkata
+Persistent=false
+AccuracySec=1s
+Unit=kiwit-banknifty-supervisor.service
+
+[Install]
+WantedBy=timers.target

@@ -383,7 +383,7 @@ def test_run_auto_entry_exit_idempotence_and_restart(desk):
 
 
 def test_stale_feed_and_ai_timeout_do_not_buy(desk):
-    service, market, analyst, clock = desk
+    service, _market, analyst, _clock = desk
     analyst.fail = True
     assert warm(desk)["position"] is None
     assert service.status()["budget"]["used_or_reserved_usd"] == ".20" or D(
@@ -525,7 +525,7 @@ def test_playbook_exits_without_ai_and_keeps_plan_attribution(desk):
     reason = "underlying_invalidation"
     service, market, analyst, clock = desk
     state = warm(desk)
-    assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v1"
+    assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v2"
     analyst.fail = True
     clock[0] += timedelta(minutes=1)
     market.latest_underlying = lambda now: {"at": now.isoformat(), "spot": "54900"}

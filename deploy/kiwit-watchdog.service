@@ -4,6 +4,8 @@ After=kiwit-api.service
 
 [Service]
 Type=oneshot
+EnvironmentFile=/etc/kiwit/kiwit.env
+WorkingDirectory=/opt/kiwit/current
 User=kiwit
 Group=kiwit
 ExecStart=/opt/kiwit/current/scripts/health_watchdog.sh

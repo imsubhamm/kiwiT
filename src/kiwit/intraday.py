@@ -150,6 +150,17 @@ class SignalMailer:
         )
         return self._send(message)
 
+    def send_operational_alert(self, reasons, dashboard_url):
+        if not self.configured:
+            return "not_configured", "SMTP is not configured"
+        message = EmailMessage()
+        message["Subject"] = "NitiQuant: paper desk needs attention"
+        message["From"] = self.sender
+        message["To"] = ", ".join(self.recipients)
+        message.set_content("Operational checks need attention:\n" + "\n".join(reasons)
+                            + "\n\nReview: " + dashboard_url + "\nPaper-only; no live orders.")
+        return self._send(message)
+
     def send_daily_report(self, report: dict[str, Any], dashboard_url: str) -> tuple[str, str]:
         """Deliver a deterministic paper-session report without exposing credentials."""
         if not self.configured:

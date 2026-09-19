@@ -8,8 +8,10 @@ from math import isfinite
 
 from .intraday import IST
 from .marketdata.canonical import Instrument, groww_candles
+from .options_calendar import VERSION as CALENDAR_VERSION
+from .options_calendar import regular_session
 
-VERSION = "banknifty-chart-v2-week"
+VERSION = "banknifty-chart-v3-calendar"
 
 
 def number(value):
@@ -63,6 +65,7 @@ def history_context(payload, now):
         b
         for b in parse_minutes(payload, now)
         if day - timedelta(days=14) <= datetime.fromisoformat(b["at"]).date() < day
+        and regular_session(datetime.fromisoformat(b["at"]).date()) is not False
     ]
     groups = defaultdict(list)
     for bar in bars:
@@ -96,12 +99,15 @@ def previous_calendar_week(daily, partial, now):
     today = now.astimezone(IST).date()
     monday = today - timedelta(days=today.weekday() + 7)
     friday = monday + timedelta(days=4)
-    dates = [str(monday + timedelta(days=i)) for i in range(5)]
+    weekdays = [monday + timedelta(days=i) for i in range(5)]
+    verified = all(regular_session(d) is not None for d in weekdays)
+    dates = [str(d) for d in weekdays if regular_session(d) is not False]
+    closures = [str(d) for d in weekdays if regular_session(d) is False]
     selected = sorted((b for b in daily if b["at"][:10] in dates), key=lambda b: b["at"])
     present = {b["at"][:10] for b in selected}
     partial_dates = sorted(set(partial).intersection(dates))
     absent = [d for d in dates if d not in present and d not in partial_dates]
-    complete = len(present) == 5 and not partial_dates
+    complete = verified and bool(dates) and len(present) == len(dates) and not partial_dates
     result = {
         "period_start": str(monday),
         "period_end": str(friday),
@@ -112,7 +118,10 @@ def previous_calendar_week(daily, partial, now):
             "complete_sessions": sorted(present),
             "partial_sessions": partial_dates,
             "absent_weekdays_unverified": absent,
-            "calendar_verified": False,
+            "calendar_verified": verified,
+            "calendar_version": CALENDAR_VERSION,
+            "scheduled_closures": closures,
+            "expected_sessions": dates,
         },
         "daily_bars": selected,
         "trend": "insufficient_data",
@@ -149,7 +158,7 @@ def previous_calendar_week(daily, partial, now):
         return_pct=rounded((close / op - 1) * 100),
         range_pct=rounded((high - low) / op * 100),
         structure=structure,
-        summary=f"{monday} to {friday}: {trend}; five complete regular sessions. Heuristic context, not a trade signal.",
+        summary=f"{monday} to {friday}: {trend}; {len(selected)} complete scheduled sessions. Heuristic context, not a trade signal.",
     )
     return result
 
@@ -400,7 +409,7 @@ def analyse(current, context, now):
         "limitations": [
             "Heuristic patterns, not validated edges or win probabilities",
             "Index has no traded volume: no VWAP or volume confirmation",
-            "Absent sessions are not independently verified against an exchange calendar",
+            "Calendar is versioned; unverified years and special-session changes require review",
         ],
         "chart_bars": {"1m": current[-60:], "5m": five[-40:], "15m": fifteen[-30:]},
     }

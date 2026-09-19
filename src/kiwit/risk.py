@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_FLOOR
+from decimal import ROUND_FLOOR, Decimal
 
 from .config import RiskConfig
-from .domain import Decision, PortfolioSnapshot, RiskDecision, TradeProposal, ZERO
+from .domain import ZERO, Decision, PortfolioSnapshot, RiskDecision, TradeProposal
 
 
 class RiskEngine:
@@ -23,7 +23,7 @@ class RiskEngine:
 
         base_risk = portfolio.equity * self.config.risk_per_trade
         if portfolio.drawdown_fraction >= self.config.drawdown_throttle:
-            base_risk /= Decimal("2")
+            base_risk /= Decimal(2)
 
         if portfolio.realized_daily_pnl <= -(base_risk * self.config.daily_loss_limit_r):
             reasons.append("DAILY_LOSS_LIMIT")

@@ -20,3 +20,5 @@ tmp/
 books/*.pdf
 *.egg-info/
 data/market/manifests/
+
+.venv-audit/

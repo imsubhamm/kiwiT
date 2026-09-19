@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+import os
+import tempfile
 import urllib.request
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from .chart_analysis import VERSION, analyse, history_context, parse_minutes
 from .intraday import IST, _quote_time
@@ -79,6 +83,40 @@ class BankNiftyMarket:
         self.broker = broker
         self.clock = clock or (lambda: datetime.now(UTC))
 
+    def contracts(self, day):
+        cache = Path(os.getenv("KIWIT_OPTION_MASTER_CACHE", "/opt/kiwit/shared/option-master.json"))
+        try:
+            saved = json.loads(cache.read_text())
+            if saved["day"] == str(day):
+                return contracts_from_csv(saved["csv"], day)
+        except (OSError, KeyError, ValueError, TypeError):
+            pass
+        # No credentials are sent to the fixed public asset origin.
+        with urllib.request.urlopen(  # nosec B310
+            "https://growwapi-assets.groww.in/instruments/instrument.csv", timeout=15
+        ) as response:
+            body = response.read(30_000_001)
+        if len(body) > 30_000_000:
+            raise ValueError("Instrument master exceeds size limit")
+        raw = body.decode("utf-8-sig")
+        contracts = contracts_from_csv(raw, day)
+        # Retain only eligible rows; keep the persistent cache small and daily-scoped.
+        rows = list(csv.DictReader(io.StringIO(raw)))
+        symbols = {c["symbol"] for c in contracts}
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(r for r in rows if r["trading_symbol"] in symbols)
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", dir=cache.parent, delete=False) as handle:
+                json.dump({"day": str(day), "csv": buf.getvalue()}, handle)
+                temp = handle.name
+            os.replace(temp, cache)
+        except OSError:
+            pass  # Caching cannot make fresh validated data unusable.
+        return contracts
+
     def quote(self, symbol, now, *, entry=True):
         payload = self.broker.quote(symbol, segment="FNO")
         # Validate against receipt-time clock, not a timestamp captured before network I/O.
@@ -95,7 +133,9 @@ class BankNiftyMarket:
         start = local.replace(hour=9, minute=15, second=0, microsecond=0)
         current = parse_minutes(self.broker.banknifty_candles(start, now), now)
         context = cached_context
-        if not context or context.get("day") != str(local.date()) or context.get("version") != VERSION:
+        if (not context or context.get("day") != str(local.date()) or context.get("version") != VERSION
+                or len(context.get("daily", [])) < 5 or context.get("partial_sessions")
+                or context.get("previous_calendar_week", {}).get("coverage", {}).get("status") != "complete"):
             midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
             context = history_context(self.broker.banknifty_candles(midnight - timedelta(days=14), midnight), now)
         analysis = analyse(current, context, now)
@@ -112,15 +152,7 @@ class BankNiftyMarket:
         ][-20:]
         stamp = datetime.fromisoformat(history[-1]["at"])
         spot = positive(history[-1]["spot"])
-        # Public instrument master: no broker credentials sent to the asset host.
-        # Literal HTTPS URL only; no caller-controlled schemes or paths.
-        with urllib.request.urlopen(  # nosec B310
-            "https://growwapi-assets.groww.in/instruments/instrument.csv", timeout=15
-        ) as response:
-            body = response.read(30_000_001)
-        if len(body) > 30_000_000:
-            raise ValueError("Instrument master exceeds size limit")
-        contracts = contracts_from_csv(body.decode("utf-8-sig"), now.astimezone(IST).date())
+        contracts = self.contracts(now.astimezone(IST).date())
         strikes = sorted({Decimal(c["strike"]) for c in contracts}, key=lambda strike: abs(strike - spot))[:3]
         candidates = []
         for contract in contracts:

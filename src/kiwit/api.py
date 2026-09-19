@@ -190,7 +190,8 @@ def create_app(
     def execution_readiness(request: Request) -> dict[str, Any]:
         from .operational_readiness import inspect_readiness
 
-        return inspect_readiness(request.app.state.database, request.app.state.intraday)
+        return inspect_readiness(request.app.state.database, request.app.state.intraday,
+                                 banknifty=request.app.state.banknifty)
 
     @app.get("/metrics", dependencies=protected, response_class=PlainTextResponse)
     def metrics(request: Request) -> str:

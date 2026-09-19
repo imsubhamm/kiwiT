@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from datetime import date
+from itertools import pairwise
 from pathlib import Path
 
 
@@ -55,7 +56,7 @@ def validate_membership(intervals: list[MembershipInterval]) -> None:
         grouped.setdefault((interval.index_symbol, interval.symbol), []).append(interval)
     for key, values in grouped.items():
         ordered = sorted(values, key=lambda item: item.valid_from)
-        for previous, current in zip(ordered, ordered[1:]):
+        for previous, current in pairwise(ordered):
             if previous.valid_to is None or previous.valid_to >= current.valid_from:
                 raise ValueError(f"overlapping membership intervals: {key}")
 

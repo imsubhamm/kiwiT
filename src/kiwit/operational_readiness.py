@@ -4,7 +4,7 @@ import os
 from datetime import UTC, datetime
 
 
-def inspect_readiness(database, intraday, *, now=None):
+def inspect_readiness(database, intraday, *, now=None, banknifty=None):
     now = now or datetime.now(UTC)
     result = {
         "at": now.isoformat(), "execution": "paper-only", "new_execution_allowed": False,
@@ -49,6 +49,13 @@ def inspect_readiness(database, intraday, *, now=None):
         except Exception:  # noqa: BLE001 - expose reason codes, never raw upstream exceptions
             result["checks"]["cash_market_data"] = "UNKNOWN"
             result["reason_codes"].append("CASH_READINESS_CHECK_FAILED")
+    if banknifty is not None:
+        from .options_operations import diagnostics
+        try:
+            result["banknifty"] = diagnostics(banknifty.store, now)
+            result["reason_codes"].extend(result["banknifty"]["reason_codes"])
+        except Exception:  # noqa: BLE001
+            result["reason_codes"].append("BANKNIFTY_DIAGNOSTICS_FAILED")
     result["status"] = "degraded" if result["reason_codes"] else "dependencies_observed"
     result["authorization"] = "Diagnostics only; session, strategy, model and risk gates still required"
     return result

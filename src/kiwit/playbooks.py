@@ -6,12 +6,12 @@ from datetime import datetime, timedelta
 from decimal import Decimal as D
 
 from .chart_analysis import VERSION as CHART_VERSION
-from .options_risk import fill_price, quantity_for, trade_limits
+from .options_risk import fill_price, quantity_for, sizing_diagnostics, trade_limits
 
-VERSION = "banknifty-selector-v1"
+VERSION = "banknifty-selector-v2"
 PLAYBOOKS = (
     {
-        "id": "opening_range_breakout_v1",
+        "id": "opening_range_breakout_v2",
         "name": "Opening-range breakout",
         "pattern": "opening_range_breakout",
         "strategy": "momentum",
@@ -19,7 +19,7 @@ PLAYBOOKS = (
         "max_hold_minutes": None,
     },
     {
-        "id": "breakout_retest_v1",
+        "id": "breakout_retest_v2",
         "name": "Breakout / retest",
         "pattern": "breakout_retest",
         "strategy": "momentum",
@@ -27,7 +27,7 @@ PLAYBOOKS = (
         "max_hold_minutes": None,
     },
     {
-        "id": "trend_pullback_v1",
+        "id": "trend_pullback_v2",
         "name": "Trend pullback",
         "pattern": "ema_pullback",
         "strategy": "momentum",
@@ -35,7 +35,7 @@ PLAYBOOKS = (
         "max_hold_minutes": None,
     },
     {
-        "id": "range_reversal_v1",
+        "id": "range_reversal_v2",
         "name": "Range reversal",
         "pattern": "range_rejection",
         "strategy": "reversal",
@@ -141,6 +141,9 @@ def select_plans(snapshot, state, now):
                 capped = dict(contract["quote"], ask=str(D(contract["quote"]["ask"]) * D("1.005")))
                 qty = quantity_for(state, contract, capped)
                 if not qty:
+                    size = sizing_diagnostics(state, contract, capped)
+                    reasons.append(f"{contract['symbol']}: whole lot cannot fit cash/risk/depth; "
+                                   f"estimated initial capital >= INR {size['minimum_initial_capital_estimate']}")
                     continue
                 fill = fill_price(contract["quote"], contract, True)
                 expires = min(

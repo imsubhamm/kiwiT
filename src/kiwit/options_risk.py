@@ -41,3 +41,20 @@ def quantity_for(state, contract, quote):
         contract["freeze"] - 1,
     )
     return max(0, units // contract["lot"] * contract["lot"])
+
+
+def sizing_diagnostics(state, contract, quote):
+    """Explain infeasible whole-lot sizing without changing risk authority."""
+    fill = fill_price(quote, contract, True)
+    notional = fill * contract['lot']
+    stop_pct = trade_limits(state)[0] / 100
+    planned_risk = notional * (stop_pct + 2 * FEE_RATE) + 40
+    daily_fraction = D(state['loss_pct']) / 100
+    required = max((notional * (1 + FEE_RATE) + 20) * 4,
+                   planned_risk / D('.01'), planned_risk / daily_fraction)
+    return {'whole_lot_quantity': quantity_for(state, contract, quote),
+            'minimum_initial_capital_estimate': str(required.quantize(D('.01'), rounding=ROUND_CEILING)),
+            'minimum_cash': str(notional * (1 + FEE_RATE) + 20),
+            'lot': contract['lot'], 'planned_lot_risk': str(planned_risk),
+            'displayed_bid_units': quote['bid_size'], 'displayed_ask_units': quote['ask_size'],
+            'note': 'Estimate before realized losses, gaps and liquidity changes; not a guaranteed loss cap'}

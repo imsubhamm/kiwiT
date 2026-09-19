@@ -68,6 +68,7 @@
       if(week.ohlc) context.push(`Week open ${week.ohlc.open} · high ${week.ohlc.high} · low ${week.ohlc.low} · close ${week.ohlc.close} · Open-to-close return ${week.return_pct}% · Range ${week.range_pct}%`);
       if(week.structure) context.push(`Daily structure (4 comparisons): higher closes ${week.structure.higher_closes} · lower closes ${week.structure.lower_closes} · higher highs/lows ${week.structure.higher_highs}/${week.structure.higher_lows} · lower highs/lows ${week.structure.lower_highs}/${week.structure.lower_lows}`);
       if(week.coverage.absent_weekdays_unverified.length) context.push(`Unverified absent weekdays: ${week.coverage.absent_weekdays_unverified.join(', ')}. Not assumed to be holidays.`);
+      if(week.coverage.scheduled_closures?.length) context.push(`Verified exchange closures: ${week.coverage.scheduled_closures.join(', ')}`);
       if(week.coverage.partial_sessions.length) context.push(`Partial weekly sessions: ${week.coverage.partial_sessions.join(', ')}`);
       if(analysis.weekly_alignment) context.push(`15m vs previous week: ${analysis.weekly_alignment.alignment} · Current price: ${analysis.weekly_alignment.price_location}`);
     }
@@ -104,18 +105,18 @@
       lines('bn-entry-plans',(selection?.plans || []).map(p=>`${names[p.playbook_id] || p.playbook_id} · ${p.symbol} × ${p.quantity} · ${Date.parse(p.expires_at)<=Date.now() ? 'EXPIRED' : 'Expires '+p.expires_at} · Trigger ${p.underlying_trigger} · Invalidation ${p.underlying_invalidation} · Chase bound ${p.underlying_max_chase} · Max premium fill ₹${p.max_fill} · Indicative premium stop/target ₹${p.planned_stop} / ₹${p.planned_target} · Plan ${p.id}`));
       const active=s?.position?.entry_plan;
       el('bn-active-plan').textContent=active ? `ACTIVE · ${names[active.playbook_id] || active.playbook_id} · ${s.position.contract.symbol} · Actual premium stop ₹${s.position.stop} · target ₹${s.position.target} · No fixed holding-time exit; risk and session exits remain active · Underlying invalidation ${active.underlying_invalidation}` : 'No open position with a selected playbook.';
-      const review=new Map((data.paper_review || []).map(r=>[r.playbook_id,r]));
-      const ids=[...new Set([...(data.playbooks || []).map(p=>p.id),...review.keys()])];
-      lines('bn-playbook-review',ids.length ? ids.map(id=>{
-        const r=review.get(id);
-        return `${names[id] || id} · UNVALIDATED · Closed trades ${r?.closed_trades || 0} · Winning trades ${r?.winning_trades || 0} · Closed net P&L ₹${r?.closed_net_pnl || '0'} · Partial exits still open ${r?.partially_exited_trades || 0} · Realized including partial ₹${r?.realized_pnl_including_partial || '0'}`;
+      const review=data.paper_review || [];
+      const reviews=review.concat((data.playbooks || []).filter(p=>!review.some(r=>r.playbook_id===p.id)).map(p=>({playbook_id:p.id})));
+      lines('bn-playbook-review',reviews.length ? reviews.map(r=>{
+        const id=r.playbook_id;
+        return `${names[id] || id} · ${r.experiment_id || 'Collecting'} · UNVALIDATED · Closed trades ${r.closed_trades || 0} · Winning trades ${r.winning_trades || 0} · Closed net P&L ₹${r.closed_net_pnl || '0'} · Partial exits still open ${r.partially_exited_trades || 0} · Realized including partial ₹${r.realized_pnl_including_partial || '0'}`;
       }) : ['No playbook evidence available yet.']);
       const learning=data.learning;
       el('bn-learning-status').textContent=learning ? `${learning.version} · ${learning.mode} · ${learning.limits}` : 'No finalized learning evidence loaded.';
       const learned=(learning?.playbook_evidence || []).map(x=>`${names[x.playbook_id] || x.playbook_id} · ${x.evidence_state.toUpperCase()} · Closed trades ${x.closed_trades} · Wins ${x.wins} · Mean return ${x.mean_return_pct}% · Net P&L ₹${x.net_pnl} · Automatic promotion disabled`);
       const days=(learning?.recent_days || []).map(x=>`${x.day} · P&L ₹${x.summary.realized_pnl} · Entries ${x.summary.entries} · ${x.summary.final_state} · Model training: ${x.summary.training ? 'yes' : 'no'}`);
       lines('bn-learning-days',learned.concat(days).length ? learned.concat(days) : ['Collecting paper outcomes. No completed day available yet.']);
-      const reports=(data.daily_reports || []).map(r=>`${r.day} · ${r.outcome.toUpperCase()} · Realized P&L ₹${r.realized_pnl} (${r.return_pct}%) · Entries ${r.entries} · ${r.reconciled_flat ? 'RECONCILED FLAT' : 'UNRESOLVED POSITION'} · Email ${r.delivery.status} (${r.delivery.attempts} attempt${r.delivery.attempts===1?'':'s'})`);
+      const reports=(data.daily_reports || []).map(r=>`${r.day} · ${r.outcome.toUpperCase()} · Realized P&L ₹${r.realized_pnl} (${r.return_pct}%) · Entries ${r.entries} · ${r.reconciled_flat ? 'RECONCILED FLAT' : 'UNRESOLVED POSITION'} ${r.recovery_trades ? '· RECOVERY: excluded from intraday comparisons ' : ''}· Email ${r.delivery.status} (${r.delivery.attempts} attempt${r.delivery.attempts===1?'':'s'})`);
       lines('bn-daily-reports',reports.length ? reports : ['Today’s report will be generated automatically at 15:30 IST after Run.']);
       if (data.available) {
         const legacy = el('run-form');
@@ -146,7 +147,17 @@
       el('bn-detail').textContent = s ? s.detail : data.available ? 'Ready. Set your limits and click Run.' : 'AI desk is not enabled on this server yet.';
       el('bn-totals').textContent = s ? `Paper cash ₹${s.cash} · P&L ₹${s.pnl}${s.valuation_fresh === false ? ' (STALE valuation)' : ''} · Session loss ${s.loss_pct}% · Session profit cap ${s.session_profit_cap_enabled === false ? 'off' : s.profit_pct + '%'} · Trade stop/target ${s.trade_stop_pct ?? s.loss_pct}% / ${s.trade_target_pct ?? s.profit_pct}% · Entries ${s.entries} · ${s.position ? s.position.contract.symbol + ' × ' + s.position.quantity : 'No open position'} · Worker ${s.last_tick || 'not seen yet'}` : 'No paper session';
       el('bn-budget').textContent = data.budget ? `API budget used/reserved $${data.budget.used_or_reserved_usd} / $${data.budget.trial_limit_usd} trial · $${data.budget.daily_limit_usd}/day · conservative estimate, not invoice` : 'Budget unavailable';
-      lines('bn-decisions', (data.decisions || []).map(d => `${d.at} · ${d.state} · ${d.result?.decision ? d.result.decision.action + ': ' + d.result.decision.summary : 'No usable AI decision'}${d.result?.validation_error ? ' · BLOCKED: '+d.result.validation_error : ''}`));
+      lines('bn-decisions', (data.decisions || []).map(d => `${d.at} · ${d.state} · ${d.result?.decision ? d.result.decision.action + ': ' + d.result.decision.summary : 'No usable AI decision'}${d.result?.failure ? ' · '+d.result.failure.category+' · HTTP '+(d.result.failure.http_status || '—')+' · '+d.result.failure.latency_ms+'ms' : ''}${d.result?.validation_error ? ' · BLOCKED: '+d.result.validation_error : ''}`));
+      const ops=data.operations;
+      if(ops) {
+        lines('bn-operations',[
+          `Operational status: ${ops.status} · ${ops.reason_codes.join(', ') || 'No active blockers'}`,
+          `Recovery trades excluded from intraday results: ${ops.recovery_trades} · P&L ₹${ops.recovery_pnl}`,
+          ...Object.entries(ops.workers || {}).map(([name,w])=>`${name}: ${w.status} · ${Math.round(w.age_seconds)}s ago`),
+          ...Object.entries(ops.funnel || {}).map(([stage,count])=>`${stage}: ${count}`),
+          ...(ops.rejection_counts || []).map(r=>`${r.playbook_id}: ${r.reason} (${r.count})`)
+        ]);
+      }
       lines('bn-events', (data.events || []).slice(0, 15).map(e => `${e.at} · ${e.kind} · ${JSON.stringify(e.detail)}`));
     } catch (error) {
       if (el('bn-data-card')) el('bn-data-card').textContent = 'Connection lost · unconfirmed';
