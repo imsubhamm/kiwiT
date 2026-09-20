@@ -510,7 +510,7 @@ def test_ai_buy_is_revalidated_after_inference_and_rejection_is_audited(desk, fa
         elif failure == "underlying_reversed":
             market.latest_underlying = lambda now: {"at": now.isoformat(), "spot": "54900"}
         else:
-            clock[0] += timedelta(seconds=91)
+                clock[0] += timedelta(seconds=121)
         return result, usage
 
     analyst.decide = changed
@@ -525,7 +525,7 @@ def test_playbook_exits_without_ai_and_keeps_plan_attribution(desk):
     reason = "underlying_invalidation"
     service, market, analyst, clock = desk
     state = warm(desk)
-    assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v2"
+    assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v3"
     analyst.fail = True
     clock[0] += timedelta(minutes=1)
     market.latest_underlying = lambda now: {"at": now.isoformat(), "spot": "54900"}

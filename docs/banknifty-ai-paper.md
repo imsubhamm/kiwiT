@@ -2,7 +2,7 @@
 
 This is a separate simulated ledger, not a promotion of the rejected cash router.
 It uses OpenAI `gpt-5.6-terra` through Responses structured outputs. The model
-receives fresh underlying observations, a short rolling history, six or fewer
+receives fresh underlying observations, a short rolling history, up to ten
 near-ATM next-expiry contracts and the current position. No books are uploaded,
 no fine-tuning occurs, and no news or historical edge is claimed. Model summaries
 are recorded, not hidden chain-of-thought. BUY is long premium only; EXIT cannot
@@ -32,16 +32,17 @@ desk disabled. The deployment script installs the independent timer. The legacy
 cash Run endpoint is blocked when this feature is enabled; old cash exits/history
 are preserved. Existing portfolio/research cards remain explicitly separate.
 
-AI calls are at most once per five-minute UTC slot, after five contiguous completed
+AI calls are at most once per two-minute UTC slot, after five contiguous completed
 one-minute index candles. Forming candles are excluded; latest close must be no
-older than 120 seconds, and option quotes no older than 60 seconds. Independent position supervision runs each minute and before
+older than 180 seconds, and option quotes no older than 90 seconds. Independent position supervision runs each minute and before
 AI calls. Model failure, insufficient budget, bad output or stale data never
 falls back to a forced/rules-only entry. Disabling AI still allows risk exits.
 Missing Groww credentials/quotes prevents fills and is shown as a blocker.
 
 ## Budget
 
-The $20 trial uses an $18 application allowance and $2/day limit, leaving a buffer.
+The application ledger allows $50 per rolling 30 IST calendar days and $5/day. This is an internal ceiling,
+not a provider invoice or an automatic credit purchase.
 Each call durably reserves $0.20 before network I/O under a database lock. Successful
 calls reconcile to a conservative $5/M input + $30/M output accounting rate, above
 the verified Terra $2/$12 rate (2026-08-26). The payload is limited to 20k bytes,
@@ -71,7 +72,7 @@ No eligible plan while flat means no paid AI call. Existing exits still run.
   Delivery uses a durable claim lease and retries after 15 minutes; SMTP is at-least-once. If a fresh executable
   quote was unavailable, the report explicitly marks the position unresolved instead
   of inventing a closing fill.
-- Max 10 entries, 25% premium allocation, 1% initial capital at planned stop.
+- Max 10 entries, 50% premium allocation, 2% initial capital at planned stop.
 - User percentages apply to session net P&L and individual premium stops/targets.
 - Ask-side buys, bid-side sells, 10bps adverse slippage rounded to tick, illustrative
   20bps + ₹20 per fill fees. These are NOT exact options brokerage/tax calculations.

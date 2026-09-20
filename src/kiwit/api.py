@@ -66,6 +66,13 @@ class BankNiftySessionRequest(PaperSessionRequest):
     trade_target_pct: Decimal | None = Field(default=None, gt=0, le=100, max_digits=8, decimal_places=4)
 
 
+class BankNiftySettlementRequest(BaseModel):
+    position_id: str = Field(min_length=1, max_length=100)
+    settlement_price: Decimal = Field(ge=0, le=1_000_000, max_digits=12, decimal_places=4)
+    settlement_fees: Decimal = Field(default=0, ge=0, le=1_000_000, max_digits=12, decimal_places=4)
+    source_reference: str = Field(min_length=3, max_length=500)
+
+
 def _valid_api_key(supplied: str) -> bool:
     expected = os.getenv("KIWIT_API_KEY", "")
     previous = os.getenv("KIWIT_PREVIOUS_API_KEY", "")
@@ -229,6 +236,18 @@ def create_app(
             raise HTTPException(503, 'Bank Nifty service unavailable')
         user = request.app.state.auth.authenticate(request.cookies.get('kiwit_session', ''))
         return service.stop(user.email if user else 'api-key-operator')
+
+    @app.post('/api/v1/banknifty/settle-expired', dependencies=protected)
+    def banknifty_settle_expired(body: BankNiftySettlementRequest, request: Request):
+        service = request.app.state.banknifty
+        if service is None:
+            raise HTTPException(503, 'Bank Nifty service unavailable')
+        user = request.app.state.auth.authenticate(request.cookies.get('kiwit_session', ''))
+        try:
+            return service.settle_expired_position(body.position_id, body.settlement_price, body.source_reference,
+                                                   user.email if user else 'api-key-operator', settlement_fees=body.settlement_fees)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
 
     @app.get("/api/v1/intraday/status", dependencies=protected)
     def intraday_status(request: Request) -> dict[str, Any]:

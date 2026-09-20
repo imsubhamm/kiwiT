@@ -57,7 +57,7 @@ def contracts_from_csv(text: str, today: date) -> list[dict]:
 
 def executable_quote(payload: dict, now: datetime, *, entry: bool = True) -> dict:
     stamp = _quote_time(payload, now)
-    if not 0 <= (now - stamp).total_seconds() <= 60:
+    if not 0 <= (now - stamp).total_seconds() <= 90:
         raise ValueError("Option quote stale or future-dated")
     depth = payload.get("depth") if isinstance(payload.get("depth"), dict) else {}
     buys = depth.get("buy") if isinstance(depth.get("buy"), list) else []
@@ -153,7 +153,7 @@ class BankNiftyMarket:
         stamp = datetime.fromisoformat(history[-1]["at"])
         spot = positive(history[-1]["spot"])
         contracts = self.contracts(now.astimezone(IST).date())
-        strikes = sorted({Decimal(c["strike"]) for c in contracts}, key=lambda strike: abs(strike - spot))[:3]
+        strikes = sorted({Decimal(c["strike"]) for c in contracts}, key=lambda strike: abs(strike - spot))[:5]
         candidates = []
         for contract in contracts:
             if Decimal(contract["strike"]) in strikes:

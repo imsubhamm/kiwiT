@@ -1,30 +1,36 @@
-# Bank Nifty paper selector v2
+# Bank Nifty paper selector v3
 
-Implementation: `banknifty-selector-v2`; sessions created by this release use
-`banknifty-ai-v5-operations`. All four playbooks are **unvalidated paper experiments**.
+Implementation: `banknifty-selector-v3-broader`. All eight playbooks are **unvalidated
+paper experiments**. This version broadens eligibility and starts a new strategy
+evidence series.
 This is not promotion of the rejected cash router or permission for broker orders.
 No new strategy is invented or automatically promoted each morning.
 
 ## Fixed catalogue and routing
 
-| Versioned playbook | Existing completed 5m setup | Required 5m and 15m regimes | Maximum hold |
+| Versioned playbook | Existing completed 5m setup | Required regime support | Maximum hold |
 | --- | --- | --- | --- |
-| opening_range_breakout_v1 | First 15m range breakout | Both match direction | No fixed deadline |
-| breakout_retest_v1 | Prior 20-bar breakout and retest | Both match direction | No fixed deadline |
-| trend_pullback_v1 | EMA9 pullback and directional close | Both match direction | No fixed deadline |
-| range_reversal_v1 | Rejection back inside the prior 20-bar range | Both range | No fixed deadline |
+| opening_range_breakout_v3 | First 15m range breakout | 5m **or** 15m matches direction | No fixed deadline |
+| breakout_retest_v3 | Prior 20-bar breakout and retest | 5m **or** 15m matches direction | No fixed deadline |
+| trend_pullback_v3 | EMA9 pullback and directional close | 5m **or** 15m matches direction | No fixed deadline |
+| range_reversal_v3 | Rejection back inside the prior 20-bar range | 5m **or** 15m range | No fixed deadline |
+| previous_day_breakout_v3 | Previous-day high/low breakout | 5m **or** 15m matches direction | No fixed deadline |
+| engulfing_reversal_v3 | Two-candle engulfing reversal | Current chart evidence only | No fixed deadline |
+| hammer_reversal_v3 | Hammer rejection | 5m **or** 15m range | No fixed deadline |
+| shooting_star_reversal_v3 | Shooting-star rejection | 5m **or** 15m range | No fixed deadline |
 
 See CHART_ANALYSIS.md for exact setup formulas. The weekly context must cover all expected regular sessions in the versioned NSE calendar;
-an opposing directional weekly bias rejects the direction. Mixed/range weekly
-context is allowed. Missing/stale evidence, unsupported regimes and no pattern
-produce an explicit wait reason. Hammer/engulfing shapes alone do not qualify.
+its directional bias is recorded context, not an entry veto. Missing/stale evidence,
+unsupported regimes and no pattern
+produce an explicit wait reason. Reversal shapes must still pass completed-candle,
+liquidity, sizing, freshness and trigger checks.
 These thresholds are engineering hypotheses, not fitted confidence or measured edge.
 Changes to rules require a new selector/playbook version and new evaluation.
 
 ## Explicit entry plans
 
-At most one plan per playbook, four overall. Eligible contracts come from the
-existing read-only Bank Nifty option universe. Filter direction, fresh executable
+At most one plan per playbook, eight overall. The observer supplies the five strikes
+nearest spot from the nearest eligible expiry. Filter direction, fresh executable
 quotes, spread <=2%, non-expiry-day contracts and affordable whole lots. Order by
 relative spread, then distance to spot, then symbol; take the first affordable
 contract. The AI selects among these bounded plans or HOLD, not arbitrary contracts.
@@ -35,10 +41,10 @@ cap, indicative stop/target, holding limit and expiry. Trigger is the setup's
 observed close; permitted price is from trigger to 0.5 five-minute ATR beyond it
 in the entry direction. Invalidation must be strictly on the opposite side.
 
-Expiry is the earliest of creation +90 seconds, setup +300 seconds and analysis
-+120 seconds. Premium cap allows at most 0.5% ask movement, then the existing adverse
+Expiry is the earliest of creation +120 seconds, setup +300 seconds and analysis
++180 seconds. Premium cap allows at most 0.5% ask movement, then the existing adverse
 slippage/tick rounding. Quantity is sized at that cap and never increased at fill.
-Sizing retains max25% premium allocation and max1% initial-capital planned risk,
+Sizing allows max50% premium allocation and max2% initial-capital planned risk,
 and now also respects the remaining daily loss budget after realized P&L.
 Illustrative fees, slippage and stop gaps mean these are not guaranteed loss caps.
 
@@ -54,7 +60,8 @@ indicative premium. AI does not set size, prices or risk limits.
 
 ## Model and independent exits
 
-The existing model, budget and endpoint are unchanged. The strict structured output
+The existing model and endpoint are unchanged. AI spending is capped at $5 per IST
+day and $50 over the trailing 30 IST calendar days. The strict structured output
 adds a required `plan_id`: BUY must reference a supplied plan and its symbol/strategy.
 HOLD uses empty symbol/plan ID and `no_trade`; EXIT references the held symbol with
 empty plan ID and `no_trade`. Instructions request a concise choice explanation,
@@ -70,7 +77,7 @@ Legacy positions without a plan retain their original exit behavior.
 
 ## Persistence and dashboard
 
-Existing JSONB storage holds selection snapshots, all four eligibility explanations,
+Existing JSONB storage holds selection snapshots, all eight eligibility explanations,
 plans, selected plan and the exact AI input. Each scan is an audit event. Paper
 entries preserve the plan; exits include position ID, playbook version, net realized
 P&L and whether the position is fully closed. Status exposes the current selection,
@@ -88,7 +95,7 @@ The user's action remains capital + limits + Run; no per-trade buttons are added
 
 ## What is and is not validated
 
-Automated tests cover routing, both directions, weekly conflicts, malformed AI
+Automated tests cover routing, both directions, weekly-context-only routing, malformed AI
 decisions, plan mutation, latency/expiry, price movement, stale data, liquidity,
 budget, duplicate requests, stop races, independent exits and partial-fill accounting.
 No live order or paid AI call is required for these tests.

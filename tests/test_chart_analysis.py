@@ -203,7 +203,8 @@ def test_breakout_evidence_direction_invalidation_and_expiry():
     assert entry_evidence(analysis, "CE", "momentum", now)
     assert not entry_evidence(analysis, "PE", "momentum", now)
     assert not entry_evidence(analysis, "CE", "reversal", now)
-    assert not entry_evidence(analysis, "CE", "momentum", now + timedelta(minutes=3))
+    assert entry_evidence(analysis, "CE", "momentum", now + timedelta(seconds=180))
+    assert not entry_evidence(analysis, "CE", "momentum", now + timedelta(seconds=181))
 
 
 def test_engulfing_rule_and_no_overnight_two_candle_setup():

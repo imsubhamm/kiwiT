@@ -437,7 +437,7 @@ def weekly_alignment(week, intraday_regime, spot):
 def entry_evidence(analysis, kind, strategy, now):
     if not analysis or not analysis.get("ready") or analysis.get("version") != VERSION:
         return []
-    if not 0 <= (now - datetime.fromisoformat(analysis["at"])).total_seconds() <= 120:
+    if not 0 <= (now - datetime.fromisoformat(analysis["at"])).total_seconds() <= 180:
         return []
     direction = {"CE": "bullish", "PE": "bearish"}.get(kind)
     return [
