@@ -8,10 +8,10 @@ from decimal import Decimal as D
 from .chart_analysis import VERSION as CHART_VERSION
 from .options_risk import fill_price, quantity_for, sizing_diagnostics, trade_limits
 
-VERSION = "banknifty-selector-v2"
+VERSION = "banknifty-selector-v3-broader"
 PLAYBOOKS = (
     {
-        "id": "opening_range_breakout_v2",
+        "id": "opening_range_breakout_v3",
         "name": "Opening-range breakout",
         "pattern": "opening_range_breakout",
         "strategy": "momentum",
@@ -19,7 +19,7 @@ PLAYBOOKS = (
         "max_hold_minutes": None,
     },
     {
-        "id": "breakout_retest_v2",
+        "id": "breakout_retest_v3",
         "name": "Breakout / retest",
         "pattern": "breakout_retest",
         "strategy": "momentum",
@@ -27,7 +27,7 @@ PLAYBOOKS = (
         "max_hold_minutes": None,
     },
     {
-        "id": "trend_pullback_v2",
+        "id": "trend_pullback_v3",
         "name": "Trend pullback",
         "pattern": "ema_pullback",
         "strategy": "momentum",
@@ -35,9 +35,41 @@ PLAYBOOKS = (
         "max_hold_minutes": None,
     },
     {
-        "id": "range_reversal_v2",
+        "id": "range_reversal_v3",
         "name": "Range reversal",
         "pattern": "range_rejection",
+        "strategy": "reversal",
+        "regime": "range",
+        "max_hold_minutes": None,
+    },
+    {
+        "id": "previous_day_breakout_v3",
+        "name": "Previous-day breakout",
+        "pattern": "previous_day_breakout",
+        "strategy": "momentum",
+        "regime": "trend",
+        "max_hold_minutes": None,
+    },
+    {
+        "id": "engulfing_reversal_v3",
+        "name": "Engulfing reversal",
+        "pattern": "engulfing",
+        "strategy": "reversal",
+        "regime": "any",
+        "max_hold_minutes": None,
+    },
+    {
+        "id": "hammer_reversal_v3",
+        "name": "Hammer reversal",
+        "pattern": "hammer",
+        "strategy": "reversal",
+        "regime": "range",
+        "max_hold_minutes": None,
+    },
+    {
+        "id": "shooting_star_reversal_v3",
+        "name": "Shooting-star reversal",
+        "pattern": "shooting_star",
         "strategy": "reversal",
         "regime": "range",
         "max_hold_minutes": None,
@@ -58,7 +90,7 @@ def route_reasons(analysis, pattern, playbook, now):
     if (
         analysis.get("version") != CHART_VERSION
         or not analysis.get("ready")
-        or not age_ok(analysis.get("at"), now, 120)
+        or not age_ok(analysis.get("at"), now, 180)
     ):
         reasons.append("Chart evidence incomplete or stale")
     if not age_ok(pattern.get("at"), now, 300):
@@ -67,19 +99,19 @@ def route_reasons(analysis, pattern, playbook, now):
     if direction not in ("bullish", "bearish"):
         reasons.append("Invalid setup direction")
     frames = analysis.get("timeframes", {})
-    required = "range" if playbook["regime"] == "range" else "uptrend" if direction == "bullish" else "downtrend"
-    if any(frames.get(frame, {}).get("regime") != required for frame in ("5m", "15m")):
-        reasons.append("5m/15m regimes do not support this playbook")
+    required = None if playbook["regime"] == "any" else (
+        "range" if playbook["regime"] == "range" else "uptrend" if direction == "bullish" else "downtrend"
+    )
+    if required and not any(frames.get(frame, {}).get("regime") == required for frame in ("5m", "15m")):
+        reasons.append("Neither 5m nor 15m regime supports this playbook")
     week = analysis.get("previous_calendar_week") or {}
     if week.get("coverage", {}).get("status") != "complete":
         reasons.append("Previous-week coverage incomplete")
-    elif (week.get("trend"), direction) in {("upward_bias", "bearish"), ("downward_bias", "bullish")}:
-        reasons.append("Direction conflicts with previous-week bias")
     return reasons
 
 
 def quote_ok(quote, now):
-    if not age_ok(quote.get("stamp"), now, 60):
+    if not age_ok(quote.get("stamp"), now, 90):
         return False
     bid, ask = D(quote["bid"]), D(quote["ask"])
     return bid.is_finite() and ask.is_finite() and 0 < bid <= ask and (ask - bid) / ask <= D(".02")
@@ -148,8 +180,8 @@ def select_plans(snapshot, state, now):
                 fill = fill_price(contract["quote"], contract, True)
                 expires = min(
                     datetime.fromisoformat(pattern["at"]) + timedelta(seconds=300),
-                    datetime.fromisoformat(analysis["at"]) + timedelta(seconds=120),
-                    now + timedelta(seconds=90),
+                    datetime.fromisoformat(analysis["at"]) + timedelta(seconds=180),
+                    now + timedelta(seconds=120),
                 )
                 if expires <= now:
                     continue
@@ -208,7 +240,7 @@ def validate_plan(decision, snapshot, state, quote, underlying, now):
         raise ValueError("Entry plan expired or future-dated")
     if (D(plan["loss_pct"]), D(plan["profit_pct"])) != (trade_limits(state)[0], trade_limits(state)[1]):
         raise ValueError("Entry plan risk limits changed")
-    if not age_ok(underlying.get("at"), now, 120) or datetime.fromisoformat(underlying["at"]) < datetime.fromisoformat(
+    if not age_ok(underlying.get("at"), now, 180) or datetime.fromisoformat(underlying["at"]) < datetime.fromisoformat(
         snapshot["spot_at"]
     ):
         raise ValueError("Entry recheck underlying is stale or older than decision")
@@ -231,7 +263,7 @@ def validate_plan(decision, snapshot, state, quote, underlying, now):
 
 def underlying_exit(position, sample, now):
     plan = position.get("entry_plan")
-    if not plan or not sample or not age_ok(sample.get("at"), now, 120):
+    if not plan or not sample or not age_ok(sample.get("at"), now, 180):
         return False
     if datetime.fromisoformat(sample["at"]) < datetime.fromisoformat(position["entered_at"]):
         return False

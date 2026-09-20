@@ -31,8 +31,8 @@ def fill_price(quote, contract, buy):
 def quantity_for(state, contract, quote):
     fill = fill_price(quote, contract, True)
     amount, cash, loss = D(state["amount"]), D(state["cash"]), D(state["loss_pct"]) / 100
-    allocation = min(amount / 4, cash)
-    risk_budget = min(amount * D(".01"), max(D(0), amount * loss + D(state.get("realized_pnl", "0"))))
+    allocation = min(amount / 2, cash)
+    risk_budget = min(amount * D(".02"), max(D(0), amount * loss + D(state.get("realized_pnl", "0"))))
     units = min(
         int(max(D(0), allocation - 20) / (fill * (1 + FEE_RATE))),
         int(max(D(0), risk_budget - 40) / (fill * (D(state.get("trade_stop_pct", state["loss_pct"])) / 100 + 2 * FEE_RATE))),
@@ -50,8 +50,8 @@ def sizing_diagnostics(state, contract, quote):
     stop_pct = trade_limits(state)[0] / 100
     planned_risk = notional * (stop_pct + 2 * FEE_RATE) + 40
     daily_fraction = D(state['loss_pct']) / 100
-    required = max((notional * (1 + FEE_RATE) + 20) * 4,
-                   planned_risk / D('.01'), planned_risk / daily_fraction)
+    required = max((notional * (1 + FEE_RATE) + 20) * 2,
+                   planned_risk / D('.02'), planned_risk / daily_fraction)
     return {'whole_lot_quantity': quantity_for(state, contract, quote),
             'minimum_initial_capital_estimate': str(required.quantize(D('.01'), rounding=ROUND_CEILING)),
             'minimum_cash': str(notional * (1 + FEE_RATE) + 20),

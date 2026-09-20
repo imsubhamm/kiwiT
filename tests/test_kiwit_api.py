@@ -77,9 +77,12 @@ class ApiTests(unittest.TestCase):
         body = {'amount': 100000, 'loss_pct': 5, 'profit_pct': 10}
         self.assertEqual(self.client.post('/api/v1/banknifty/run', json=body).status_code, 401)
         self.assertEqual(self.client.post('/api/v1/banknifty/stop').status_code, 401)
+        settlement = {'position_id': 'test-id', 'settlement_price': '12.5', 'source_reference': 'NSE settlement bulletin'}
+        self.assertEqual(self.client.post('/api/v1/banknifty/settle-expired', json=settlement).status_code, 401)
         self.assertEqual(self.client.get('/api/v1/banknifty/status').status_code, 401)
         self.assertFalse(self.client.get('/api/v1/banknifty/status', headers=headers).json()['available'])
         self.assertEqual(self.client.post('/api/v1/banknifty/run', headers=headers, json=body).status_code, 503)
+        self.assertEqual(self.client.post('/api/v1/banknifty/settle-expired', headers=headers, json=settlement).status_code, 503)
         self.assertEqual(self.client.post('/api/v1/banknifty/run', headers=headers,
                                          json=dict(body, loss_pct=-5)).status_code, 422)
 

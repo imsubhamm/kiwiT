@@ -17,6 +17,7 @@ def heartbeat(store, worker, now, status, detail=None):
 
 def report_backlog(service, now):
     """Catch up all due dates; SMTP is at-least-once with a bounded claim lease."""
+    service.store.reconcile_interrupted_calls(now)
     local = now.astimezone(IST)
     today_due = (local.hour, local.minute) >= (15, 30)
     with service.store.locked() as connection:
@@ -35,7 +36,7 @@ def report_backlog(service, now):
             "SELECT trading_date,report FROM banknifty_daily_reports WHERE delivery_status<>'sent' "
             "AND (delivery_lease_until IS NULL OR delivery_lease_until<=%s) "
             "AND (delivery_next_attempt IS NULL OR delivery_next_attempt<=%s) "
-            "ORDER BY trading_date LIMIT 1 FOR UPDATE SKIP LOCKED", (now, now)).fetchone()
+            "ORDER BY delivery_attempts ASC, delivery_next_attempt NULLS FIRST, trading_date LIMIT 1 FOR UPDATE SKIP LOCKED", (now, now)).fetchone()
         if not row:
             return
         day, report = row
@@ -66,6 +67,14 @@ def diagnostics(store, now):
         calls = connection.execute(
             "SELECT state,result FROM banknifty_ai_calls WHERE trading_date=%s ORDER BY created_at DESC LIMIT 3",
             (day,)).fetchall()
+        unresolved_calls = connection.execute(
+            "SELECT count(*) FROM banknifty_ai_calls WHERE state IN ('reserved','completed') AND created_at<%s",
+            (now - timedelta(minutes=10),),
+        ).fetchone()[0]
+        interrupted_calls = connection.execute(
+            "SELECT count(*),COALESCE(sum(reserved_usd),0) FROM banknifty_ai_calls "
+            "WHERE state='interrupted' AND trading_date>=%s", (day - timedelta(days=29),)
+        ).fetchone()
         pending = connection.execute(
             "SELECT count(*) FROM banknifty_daily_reports WHERE delivery_status<>'sent'").fetchone()[0]
         outcome = connection.execute(
@@ -84,6 +93,7 @@ def diagnostics(store, now):
     health = {w: {"at": at.isoformat(), "status": status, "age_seconds": (now-at).total_seconds(), "detail": detail}
               for w, at, status, detail in workers}
     issues = []
+    running = bool(state and state.get("state") == "running" and state.get("day") == str(day))
     if in_session:
         for worker in ("supervisor", "observer"):
             if worker not in health or health[worker]["age_seconds"] > 150:
@@ -91,8 +101,14 @@ def diagnostics(store, now):
             elif health[worker]["status"] == "failed":
                 issues.append(worker.upper() + "_FAILED")
         observer_stamp = health.get("observer", {}).get("detail", {}).get("spot_at")
-        if observer_stamp and (now - datetime.fromisoformat(observer_stamp)).total_seconds() > 150:
+        if observer_stamp and (now - datetime.fromisoformat(observer_stamp)).total_seconds() > 180:
             issues.append("OBSERVED_MARKET_DATA_STALE")
+        if running and (local.hour, local.minute) < (15, 0):
+            worker = health.get("decision")
+            if not worker or worker["age_seconds"] > 150:
+                issues.append("DECISION_HEARTBEAT_STALE")
+            elif worker["status"] == "failed":
+                issues.append("DECISION_WORKER_FAILED")
     if len(calls) == 3 and all(status == "failed" for status, _ in calls):
         issues.append("AI_CONSECUTIVE_FAILURES")
     if state and state.get("position"):
@@ -102,12 +118,19 @@ def diagnostics(store, now):
             issues.append("POSITION_QUOTE_STALE")
     if pending:
         issues.append("REPORT_DELIVERY_PENDING")
-    if owned:
-        issues.append("RUNTIME_OWNS_TABLES")
+    notices = ["RUNTIME_OWNS_TABLES"] if owned else []
+    if unresolved_calls:
+        issues.append("INTERRUPTED_AI_CALL_RECONCILIATION_PENDING")
+    if interrupted_calls[0]:
+        notices.append("INTERRUPTED_AI_CHARGES_RETAINED_CHECK_PROVIDER_USAGE")
     if regular_session(day) is None:
         issues.append("CALENDAR_UNVERIFIED")
+    elif regular_session(day + timedelta(days=60)) is None:
+        notices.append("CALENDAR_UPDATE_DUE_WITHIN_60_DAYS")
     return {"status": "degraded" if issues else "ok", "reason_codes": issues, "workers": health,
-            "in_session": in_session, "pending_reports": pending,
+            "in_session": in_session, "pending_reports": pending, "security_notices": notices,
+            "unresolved_ai_calls": unresolved_calls,
+            "interrupted_ai_calls": interrupted_calls[0], "interrupted_ai_reserved_usd": str(interrupted_calls[1]),
             "recovery_trades": outcome[0], "recovery_pnl": str(outcome[1]),
             "funnel": dict(counts), "rejection_counts": [
                 {"playbook_id": p, "reason": r, "count": n} for p,r,n in reasons]}

@@ -3,6 +3,7 @@
 import io
 import json
 from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -149,6 +150,17 @@ def test_frozen_selector_replays_without_model_or_future_data():
     assert replay(bundle)['mismatches'] == 1
 
 
+def test_replay_rejects_tampered_plan_contents():
+    from test_playbooks import fixtures
+
+    from kiwit.options_replay import replay
+    snapshot, state, _ = fixtures()
+    snapshot.update(capital=state['amount'], cash=state['cash'], loss_pct=state['loss_pct'],
+                    profit_pct=state['profit_pct'], day=state['day'], realized_pnl='0', provenance={'release': 'test'})
+    snapshot['strategy_selection']['plans'][0]['quantity'] = 999999
+    assert replay({'calls': [{'call_id': 'fixture', 'snapshot': snapshot}]})['mismatches'] == 1
+
+
 def test_report_failed_delivery_retries_after_backoff(desk):
     service, _, _, clock = desk
     warm(desk)
@@ -164,6 +176,25 @@ def test_report_failed_delivery_retries_after_backoff(desk):
     service._process_daily_report(None, clock[0] + timedelta(minutes=15))
     assert len(service.mailer.reports) == 2
     assert service.status()['daily_reports'][0]['delivery']['status'] == 'sent'
+
+
+def test_report_failure_does_not_starve_later_unattempted_report(desk):
+    service, _, _, _clock = desk
+    warm(desk)
+    with service.store.locked() as connection:
+        for day in ('2026-08-24', '2026-08-25'):
+            connection.execute(
+                "INSERT INTO banknifty_daily_reports(trading_date,generated_at,report) VALUES(%s,%s,%s::jsonb)",
+                (day, NOW, json.dumps({'day': day})),
+            )
+    class FailOldest(Mailer):
+        def send_daily_report(self, report, _url):
+            self.reports.append(report['day'])
+            return ('failed', 'transport') if report['day'] == '2026-08-24' else ('sent', '')
+    service.mailer = FailOldest()
+    service._process_daily_report(None, NOW)
+    service._process_daily_report(None, NOW + timedelta(minutes=15))
+    assert service.mailer.reports == ['2026-08-24', '2026-08-25']
 
 
 def test_runtime_role_can_write_but_cannot_drop_tables(db):
@@ -201,3 +232,116 @@ def test_expired_residual_requires_settlement_and_never_fabricates_exit(desk):
     assert status['session']['position'] is not None
     assert 'settlement' in status['session']['detail']
     assert not any(e['kind'] == 'paper_exit' for e in status['events'])
+
+
+def test_verified_expired_settlement_unblocks_the_next_session(desk):
+    service, _, _, clock = desk
+    initial = warm(desk)
+    clock[0] = NOW.replace(month=9, day=30)
+    service.supervise()
+    position_id = initial['position']['id']
+    settled = service.settle_expired_position(position_id, '12.50', 'NSE final settlement bulletin fixture', 'test')
+    assert settled['state'] == 'completed' and settled['position'] is None
+    event = next(e for e in service.status()['events'] if e['kind'] == 'paper_settlement')
+    assert event['detail']['source_reference'] == 'NSE final settlement bulletin fixture'
+    assert service.status()['operations']['recovery_trades'] == 1
+    assert service.status()['learning']['playbook_evidence'] == []
+    assert service.settle_expired_position(position_id, '12.50', 'NSE final settlement bulletin fixture', 'test')['state'] == 'already_settled'
+    with pytest.raises(ValueError, match='different evidence'):
+        service.settle_expired_position(position_id, '13', 'NSE final settlement bulletin fixture', 'test')
+    next_day = clock[0] + timedelta(days=1)
+    clock[0] = next_day
+    assert service.start(100000, 5, 10, 'test')['state'] == 'running'
+
+
+def test_interrupted_calls_are_conservatively_reconciled_and_visible(desk):
+    service, market, _, clock = desk
+    service.start(100000, 5, 10, 'test')
+    call_id = service.store.reserve(clock[0], market.snapshot(clock[0]))
+    clock[0] += timedelta(minutes=11)
+    service.run_once()
+    with service.store.locked() as connection:
+        row = connection.execute('SELECT state,result FROM banknifty_ai_calls WHERE call_id=%s', (call_id,)).fetchone()
+    assert row[0] == 'interrupted' and row[1]['recovery']['charge_retained'] is True
+
+
+def test_decision_heartbeat_is_required_during_a_running_session(desk):
+    from kiwit.options_operations import diagnostics
+
+    service, _, _, clock = desk
+    service.start(100000, 5, 10, 'test')
+    service.observe()
+    service.supervise()
+    assert 'DECISION_HEARTBEAT_STALE' in diagnostics(service.store, clock[0])['reason_codes']
+
+
+def test_rolling_budget_renews_without_erasing_historical_charges(desk):
+    service, market, _, clock = desk
+    service.start(100000, 5, 10, 'test')
+    with service.store.locked() as connection:
+        connection.execute(
+            "INSERT INTO banknifty_ai_calls(call_id,trading_date,slot,state,reserved_usd,snapshot) "
+            "VALUES(gen_random_uuid(),%s,1,'interrupted',50,'{}'::jsonb)",
+            (clock[0].date() - timedelta(days=30),))
+    call = service.store.reserve(clock[0], market.snapshot(clock[0]))
+    assert call is not None
+    status = service.status()['budget']
+    assert Decimal(status['rolling_used_or_reserved_usd']) == Decimal('.20')
+    with service.store.locked() as connection:
+        connection.execute("UPDATE banknifty_ai_calls SET trading_date=%s WHERE slot=1",
+                           (clock[0].date() - timedelta(days=29),))
+    clock[0] += timedelta(minutes=2)
+    assert service.store.reserve(clock[0], market.snapshot(clock[0])) is None
+
+
+def test_report_worker_recovers_abandoned_calls_and_preserves_charge_warning(desk):
+    service, market, _, clock = desk
+    service.start(100000, 5, 10, 'test')
+    call = service.store.reserve(clock[0], market.snapshot(clock[0]))
+    clock[0] += timedelta(minutes=11)
+    service._process_daily_report(None, clock[0])
+    service.store.settle(call, {'action': 'HOLD'}, {'budget_charge_usd': '0'}, now=clock[0])
+    operations = service.status()['operations']
+    assert operations['interrupted_ai_calls'] == 1
+    assert 'INTERRUPTED_AI_CHARGES_RETAINED_CHECK_PROVIDER_USAGE' in operations['security_notices']
+
+
+def test_partial_exit_then_expiry_settlement_reconciles_all_realized_pnl(desk):
+    service, market, _, clock = desk
+    initial = warm(desk)
+    service.stop('test')
+    market.size = 30
+    clock[0] += timedelta(minutes=1)
+    service.run_once()
+    assert service.status()['session']['position'] is not None
+    clock[0] = NOW.replace(month=9, day=30)
+    with pytest.raises(ValueError, match='no longer matches'):
+        service.settle_expired_position('wrong-position', '12', 'fixture bulletin', 'test')
+    service.settle_expired_position(initial['position']['id'], '12', 'fixture bulletin', 'test', settlement_fees='1.25')
+    status = service.status()
+    assert Decimal(status['operations']['recovery_pnl']) == Decimal(status['session']['realized_pnl'])
+    assert status['operations']['recovery_trades'] == 1
+    assert status['paper_review'] == []
+    assert status['learning']['playbook_evidence'] == []
+
+
+def test_frozen_entry_and_partial_exit_replay_detects_changed_fill(desk):
+    from kiwit.options_replay import replay
+
+    service, market, _, clock = desk
+    warm(desk)
+    service.stop('test')
+    market.size = 30
+    clock[0] += timedelta(minutes=1)
+    service.run_once()
+    with service.store.locked() as connection:
+        calls = connection.execute('SELECT call_id,snapshot,result FROM banknifty_ai_calls ORDER BY slot').fetchall()
+        events = connection.execute('SELECT event_id,kind,detail FROM banknifty_events ORDER BY event_id').fetchall()
+    bundle = {'calls': [dict(zip(('call_id', 'snapshot', 'result'), row, strict=True)) for row in calls],
+              'events': [dict(zip(('event_id', 'kind', 'detail'), row, strict=True)) for row in events]}
+    result = replay(bundle)
+    assert len(result['fills']) == 2
+    assert all(fill['status'] == 'match' for fill in result['fills'])
+    entry = next(e for e in bundle['events'] if e['kind'] == 'paper_entry')
+    entry['detail']['position']['entry'] = '999'
+    assert replay(bundle)['fills'][0]['status'] == 'mismatch'

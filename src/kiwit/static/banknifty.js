@@ -4,6 +4,7 @@
   let busy = false;
   let syncing = false;
   let chartAnalysis = null;
+  let settlementPosition = null;
   const lines = (id, values) => {
     el(id).replaceChildren(...values.map(value => {
       const p = document.createElement('p'); p.textContent = value; return p;
@@ -58,7 +59,7 @@
       lines('bn-context', []); lines('bn-patterns', []); renderChart(); return;
     }
     const age = (Date.now()-Date.parse(analysis.at))/1000;
-    const quality = age>120 || age<0 ? 'STALE — historical display only' : analysis.ready ? 'Context ready' : 'Incomplete — new entries blocked';
+    const quality = age>180 || age<0 ? 'STALE — historical display only' : analysis.ready ? 'Context ready' : 'Incomplete — new entries blocked';
     el('bn-chart-summary').textContent=`${quality} · ${analysis.at} · ${analysis.summary}`;
     const context = Object.entries(analysis.timeframes).map(([frame,m])=>`${frame}: ${m.regime} · EMA9 ${m.ema9 ?? 'warming up'} · EMA21 ${m.ema21 ?? 'warming up'} · ATR14 ${m.atr14 ?? 'warming up'} · RSI14 ${m.rsi14 ?? 'warming up'}`);
     if(analysis.week) context.push(`Prior sessions: ${analysis.week.sessions.join(', ')} · Return ${analysis.week.return_pct}% · High ${analysis.week.high} · Low ${analysis.week.low}`);
@@ -98,7 +99,7 @@
 
       renderAnalysis(s?.chart_analysis);
       const selection=s?.strategy_selection;
-      const stale=!selection || Date.now()-Date.parse(selection.at)>120000 || Date.parse(selection.at)>Date.now();
+      const stale=!selection || Date.now()-Date.parse(selection.at)>180000 || Date.parse(selection.at)>Date.now();
       el('bn-selector-status').textContent=selection ? `${selection.version} · ${selection.at} · ${stale ? 'STALE — historical display only' : s.position ? 'Position monitoring — no additional entry' : selection.plans.length ? 'Eligible plans — AI may select or HOLD' : 'Waiting — no eligible setup'}` : 'No scan yet. Start a paper session during market hours.';
       const names=Object.fromEntries((data.playbooks || []).map(p=>[p.id,p.name]));
       lines('bn-playbooks',(selection?.evaluations || []).map(e=>`${names[e.playbook_id] || e.playbook_id}: ${e.eligible ? 'ELIGIBLE' : 'WAIT'} · ${e.reasons.join('; ')}`));
@@ -117,12 +118,23 @@
       const days=(learning?.recent_days || []).map(x=>`${x.day} · P&L ₹${x.summary.realized_pnl} · Entries ${x.summary.entries} · ${x.summary.final_state} · Model training: ${x.summary.training ? 'yes' : 'no'}`);
       lines('bn-learning-days',learned.concat(days).length ? learned.concat(days) : ['Collecting paper outcomes. No completed day available yet.']);
       const reports=(data.daily_reports || []).map(r=>`${r.day} · ${r.outcome.toUpperCase()} · Realized P&L ₹${r.realized_pnl} (${r.return_pct}%) · Entries ${r.entries} · ${r.reconciled_flat ? 'RECONCILED FLAT' : 'UNRESOLVED POSITION'} ${r.recovery_trades ? '· RECOVERY: excluded from intraday comparisons ' : ''}· Email ${r.delivery.status} (${r.delivery.attempts} attempt${r.delivery.attempts===1?'':'s'})`);
+      for (const r of data.daily_reports || []) {
+        for (const supplement of r.settlement_supplements || []) {
+          reports.push(`${r.day} · Later expiry settlement · ${supplement.settled_at} · P&L ₹${supplement.pnl} · Source: ${supplement.source_reference} · Recovery excluded from strategy learning; original report retained`);
+        }
+      }
       lines('bn-daily-reports',reports.length ? reports : ['Today’s report will be generated automatically at 15:30 IST after Run.']);
       if (data.available) {
         const legacy = el('run-form');
         if (legacy) legacy.hidden = true;
       }
       const today = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Kolkata', year:'numeric', month:'2-digit', day:'2-digit'}).format(new Date());
+      const residual = s?.position;
+      settlementPosition = residual && residual.contract.expiry < today ? residual.id : null;
+      if (el('bn-settlement-form')) {
+        el('bn-settlement-form').hidden = !settlementPosition;
+        el('bn-settlement-submit').disabled = busy || !settlementPosition;
+      }
       const usedToday = Boolean(s && s.day === today);
       for (const [id, value] of Object.entries({
         'bn-amount': s?.amount, 'bn-loss': s?.loss_pct, 'bn-profit': s?.profit_pct,
@@ -146,12 +158,13 @@
       el('bn-state').textContent = `${data.model || 'AI'} · ${s ? s.state : 'Not running'} · PAPER ONLY`;
       el('bn-detail').textContent = s ? s.detail : data.available ? 'Ready. Set your limits and click Run.' : 'AI desk is not enabled on this server yet.';
       el('bn-totals').textContent = s ? `Paper cash ₹${s.cash} · P&L ₹${s.pnl}${s.valuation_fresh === false ? ' (STALE valuation)' : ''} · Session loss ${s.loss_pct}% · Session profit cap ${s.session_profit_cap_enabled === false ? 'off' : s.profit_pct + '%'} · Trade stop/target ${s.trade_stop_pct ?? s.loss_pct}% / ${s.trade_target_pct ?? s.profit_pct}% · Entries ${s.entries} · ${s.position ? s.position.contract.symbol + ' × ' + s.position.quantity : 'No open position'} · Worker ${s.last_tick || 'not seen yet'}` : 'No paper session';
-      el('bn-budget').textContent = data.budget ? `API budget used/reserved $${data.budget.used_or_reserved_usd} / $${data.budget.trial_limit_usd} trial · $${data.budget.daily_limit_usd}/day · conservative estimate, not invoice` : 'Budget unavailable';
+      el('bn-budget').textContent = data.budget ? `API allowance: $${data.budget.rolling_used_or_reserved_usd ?? '—'} / $${data.budget.rolling_limit_usd ?? '—'} over ${data.budget.rolling_days ?? 30} days · today $${data.budget.today_used_or_reserved_usd ?? '—'} / $${data.budget.daily_limit_usd} · lifetime ledger $${data.budget.used_or_reserved_usd} · conservative estimate, not invoice` : 'Budget unavailable';
       lines('bn-decisions', (data.decisions || []).map(d => `${d.at} · ${d.state} · ${d.result?.decision ? d.result.decision.action + ': ' + d.result.decision.summary : 'No usable AI decision'}${d.result?.failure ? ' · '+d.result.failure.category+' · HTTP '+(d.result.failure.http_status || '—')+' · '+d.result.failure.latency_ms+'ms' : ''}${d.result?.validation_error ? ' · BLOCKED: '+d.result.validation_error : ''}`));
       const ops=data.operations;
       if(ops) {
         lines('bn-operations',[
           `Operational status: ${ops.status} · ${ops.reason_codes.join(', ') || 'No active blockers'}`,
+          ...(ops.security_notices || []).map(notice=>`Notice: ${notice}`),
           `Recovery trades excluded from intraday results: ${ops.recovery_trades} · P&L ₹${ops.recovery_pnl}`,
           ...Object.entries(ops.workers || {}).map(([name,w])=>`${name}: ${w.status} · ${Math.round(w.age_seconds)}s ago`),
           ...Object.entries(ops.funnel || {}).map(([stage,count])=>`${stage}: ${count}`),
@@ -160,6 +173,8 @@
       }
       lines('bn-events', (data.events || []).slice(0, 15).map(e => `${e.at} · ${e.kind} · ${JSON.stringify(e.detail)}`));
     } catch (error) {
+      settlementPosition = null;
+      if (el('bn-settlement-submit')) el('bn-settlement-submit').disabled = true;
       if (el('bn-data-card')) el('bn-data-card').textContent = 'Connection lost · unconfirmed';
       if (el('bn-readiness')) el('bn-readiness').textContent = 'Bank Nifty connection unavailable';
       if (el('bn-next-action')) el('bn-next-action').textContent = 'Displayed values may be old. Sync again to confirm the recorded session state.';
@@ -188,6 +203,23 @@
     await sync();
   }
   el('bn-form').addEventListener('submit', event => action(event, 'run'));
+  el('bn-settlement-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy || !settlementPosition) return;
+    busy = true;
+    el('bn-settlement-submit').disabled = true;
+    const position_id = settlementPosition;
+    try {
+      await call('/api/v1/banknifty/settle-expired', {method:'POST', body:JSON.stringify({
+        position_id, settlement_price:el('bn-settlement-price').value,
+        settlement_fees:el('bn-settlement-fees').value, source_reference:el('bn-settlement-source').value
+      })});
+    } catch (error) {
+      el('bn-detail').textContent = error.message + ' Sync to check settlement before retrying.';
+      return;
+    } finally { busy = false; }
+    await sync();
+  });
   el('bn-stop').addEventListener('click', event => action(event, 'stop'));
   el('refresh').addEventListener('click', sync);
   el('bn-timeframe').addEventListener('change', renderChart);

@@ -27,10 +27,11 @@ amendments; this bundled calendar does not fetch notices automatically.
 
 ## Evidence and recovery
 
-Selector v2/playbooks v2 retain the deliberately chosen no-fixed-holding-deadline
+Selector v3/playbooks v3 retain the deliberately chosen no-fixed-holding-deadline
 policy. Premium, underlying invalidation, operator, halt and end-of-day exits stay
 active. A versioned experiment fingerprint includes model/provider/prompt/schema,
-release, sizing, selector and exit policy. Learning includes only closed, same-day
+sizing, selector and exit policy. The release SHA remains on every record for
+provenance but does not split otherwise compatible strategy evidence. Learning includes only closed, same-day
 trades from the exact experiment. Legacy unbound records remain visible but are not
 used to improve the current experiment's learning statistics.
 
@@ -46,16 +47,20 @@ Structured failure records store category, dispatch certainty, HTTP status, safe
 request ID, latency and provider/model. No raw provider body or credential is stored.
 Local validation happens before reservation. Ambiguous dispatched requests retain
 budget. Three successive failures open a 15-minute circuit, after which one new
-eligible call can probe recovery. Independent exits continue throughout.
+eligible call can probe recovery. Calls left reserved or completed by a process
+interruption are marked `interrupted` after ten minutes, retain their conservative
+charge and are never replayed. Independent exits continue throughout.
 
 ## Deployment and permissions
 
-Apply migration 014 with the migration owner. Provision roles using
+Apply migrations through 015 using the configured owner. The current accepted setup
+uses `neondb_owner`; role separation is optional and is not a blocker for this build.
+For a later role separation, provision roles using
 `scripts/provision_database_roles.py --output /protected/path/roles.env` with
 `KIWIT_MIGRATION_DATABASE_URL` supplied securely. It creates `kiwit_runtime` and
 `kiwit_reader`, writes generated URLs to an exclusive mode-0600 file, and fails if
 PUBLIC schema CREATE privileges would defeat the restriction. It never prints URLs.
-Put only the runtime URL in `/etc/kiwit/kiwit.env`. Keep the migration URL in a
+For that optional setup, put only the runtime URL in `/etc/kiwit/kiwit.env`. Keep the migration URL in a
 root-only `/etc/kiwit/migration.env`; services never source that file. The deployment
 script refreshes runtime grants after migrations when the owner URL is configured.
 Validate login, session writes, halts, workers, migrations and rollback before release.
@@ -85,6 +90,8 @@ filesystem; on this Mac the external drive's previous TMPDIR was unusable.
 
 `export_options_evidence.py --output /protected/new-bundle.json` runs a repeatable-read,
 read-only export with a content checksum. `replay_options_evidence.py bundle.json`
-checks recorded entry plans against the same selector used by the running desk.
+checks full recorded entry plans against the same selector used by the running desk,
+then checks entry authority, fill prices, sizing, stops/targets and partial-exit accounting.
+It cannot reconstruct external halt/consent history or authenticate an operator's settlement source.
 It reports old unbound calls explicitly and never invents historical AI choices or
 option P&L. This is reproducibility/parity evidence, not an out-of-sample backtest.

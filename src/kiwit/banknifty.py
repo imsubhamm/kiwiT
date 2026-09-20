@@ -19,10 +19,11 @@ from .brokers.groww import BrokerApiError
 from .chart_analysis import entry_evidence
 from .intraday import IST, SignalMailer
 from .options_ai import (
+    BUDGET_DAYS,
     DAILY_BUDGET,
     MODEL,
     RESERVATION,
-    TRIAL_BUDGET,
+    ROLLING_BUDGET,
     AIFailure,
     OpenAIPaperAnalyst,
     failure_evidence,
@@ -44,12 +45,13 @@ def experiment_id(state=None):
     state = state or {}
     risk = {key: str(state.get(key)) for key in (
         "amount", "loss_pct", "profit_pct", "trade_stop_pct", "trade_target_pct", "session_profit_cap_enabled")}
-    return hashlib.sha256(json.dumps({**provenance(), "selector": SELECTOR_VERSION, "risk": risk},
+    compatible_provenance = {key: value for key, value in provenance().items() if key != "release"}
+    return hashlib.sha256(json.dumps({**compatible_provenance, "selector": SELECTOR_VERSION, "risk": risk},
                                      sort_keys=True).encode()).hexdigest()[:20]
 
 
 def fresh(quote, now):
-    return quote is not None and 0 <= (now - datetime.fromisoformat(quote["stamp"])).total_seconds() <= 60
+    return quote is not None and 0 <= (now - datetime.fromisoformat(quote["stamp"])).total_seconds() <= 90
 
 
 def entry_window(now):
@@ -131,29 +133,41 @@ class BankNiftyStore:
                 return None
             used, today = connection.execute(
                 "SELECT COALESCE(sum(reserved_usd),0),COALESCE(sum(reserved_usd) "
-                "FILTER(WHERE trading_date=%s),0) FROM banknifty_ai_calls",
-                (day,),
+                "FILTER(WHERE trading_date=%s),0) FROM banknifty_ai_calls WHERE trading_date>=%s",
+                (day, now.astimezone(IST).date() - timedelta(days=BUDGET_DAYS - 1)),
             ).fetchone()
-            if used + RESERVATION > TRIAL_BUDGET or today + RESERVATION > DAILY_BUDGET:
+            if used + RESERVATION > ROLLING_BUDGET or today + RESERVATION > DAILY_BUDGET:
                 state["detail"] = "AI spending limit reached; independent exits remain active"
                 self.save(connection, state)
                 return None
             call_id = uuid4()
             row = connection.execute(
-                "INSERT INTO banknifty_ai_calls(call_id,trading_date,slot,state,reserved_usd,snapshot) "
-                "VALUES(%s,%s,%s,'reserved',%s,%s::jsonb) ON CONFLICT(slot) DO NOTHING RETURNING call_id",
-                (call_id, day, int(now.timestamp()) // 300, RESERVATION, json.dumps(snapshot)),
+                "INSERT INTO banknifty_ai_calls(call_id,trading_date,slot,state,reserved_usd,snapshot,created_at) "
+                "VALUES(%s,%s,%s,'reserved',%s,%s::jsonb,%s) ON CONFLICT(slot) DO NOTHING RETURNING call_id",
+                (call_id, day, int(now.timestamp()) // 120, RESERVATION, json.dumps(snapshot), now),
             ).fetchone()
             return call_id if row else None
 
-    def settle(self, call_id, decision, usage, failure=None):
+    def reconcile_interrupted_calls(self, now):
+        """Close abandoned reservations conservatively; never replay a stale decision."""
+        with self.locked() as connection:
+            return connection.execute(
+                "UPDATE banknifty_ai_calls SET state='interrupted', "
+                "result=COALESCE(result,'{}'::jsonb) || jsonb_build_object("
+                "'recovery',jsonb_build_object('at',%s::text,'reason','process_interrupted','charge_retained',true)) "
+                "WHERE state IN ('reserved','completed') AND created_at<%s RETURNING call_id",
+                (now.isoformat(), now - timedelta(minutes=10)),
+            ).fetchall()
+
+    def settle(self, call_id, decision, usage, failure=None, *, now=None):
         with self.locked() as connection:
             connection.execute(
-                "UPDATE banknifty_ai_calls SET state=%s,reserved_usd=%s,result=%s::jsonb WHERE call_id=%s",
+                "UPDATE banknifty_ai_calls SET state=%s,reserved_usd=%s,result=%s::jsonb WHERE call_id=%s AND state='reserved'",
                 (
                     "completed" if decision else "failed",
                     D(usage["budget_charge_usd"]) if usage else (D(0) if failure and not failure["dispatched"] else RESERVATION),
-                    json.dumps({"decision": decision, "usage": usage, "failure": failure}),
+                    json.dumps({"decision": decision, "usage": usage, "failure": failure,
+                                "settled_at": (now or datetime.now(IST)).isoformat()}),
                     call_id,
                 ),
             )
@@ -360,7 +374,7 @@ class BankNiftyService:
                 "last_exit": None,
                 "execution": "paper-only",
                 "model": MODEL,
-                "version": "banknifty-ai-v5-operations",
+                "version": "banknifty-ai-v6-recovery",
                 "provenance": provenance(),
                 "last_tick": None,
             }
@@ -381,10 +395,66 @@ class BankNiftyService:
                 self.store.finalize_learning(connection, state)
             return state or {"state": "idle"}
 
+    def settle_expired_position(self, position_id, settlement_price, source_reference, actor, *, settlement_fees=0):
+        """Record operator-attested expiry evidence, bound to a specific residual."""
+        price = D(str(settlement_price))
+        costs = D(str(settlement_fees))
+        if not price.is_finite() or price < 0:
+            raise ValueError("Settlement price must be a non-negative verified amount")
+        if not costs.is_finite() or costs < 0:
+            raise ValueError("Settlement fees must be non-negative")
+        if not isinstance(source_reference, str) or not 3 <= len(source_reference.strip()) <= 500:
+            raise ValueError("Settlement evidence reference is required")
+        now = self.clock()
+        with self.store.locked() as connection:
+            previous = connection.execute(
+                "SELECT detail FROM banknifty_events WHERE kind='paper_settlement' AND detail->>'position_id'=%s",
+                (position_id,),
+            ).fetchone()
+            if previous:
+                detail = previous[0]
+                if (D(detail['settlement_price']) != price or D(detail['settlement_fees']) != costs
+                        or detail['source_reference'] != source_reference.strip()):
+                    raise ValueError("Settlement already recorded with different evidence")
+                return {'state': 'already_settled', 'position_id': position_id}
+            state = self.store.latest(connection)
+            position = state.get("position") if state else None
+            if not position or position['id'] != position_id:
+                raise ValueError("Requested unresolved paper position no longer matches")
+            if position["contract"]["expiry"] >= str(now.astimezone(IST).date()):
+                raise ValueError("Settlement is only for an expired contract")
+            quantity = position["quantity"]
+            proceeds = price * quantity - costs
+            entry_cost = D(position.get("entry_cost_remaining", D(position["entry_cost_per_unit"]) * quantity))
+            pnl = proceeds - entry_cost
+            state["cash"] = str(D(state["cash"]) + proceeds)
+            state["realized_pnl"] = str(D(state["realized_pnl"]) + pnl)
+            state["pnl"] = state["realized_pnl"]
+            state['valuation_fresh'] = True
+            state["position"] = None
+            state["state"] = "completed"
+            state["detail"] = "Expired position reconciled from operator-attested settlement evidence"
+            self.store.event(connection, state, "paper_settlement", {
+                "position_id": position["id"], "symbol": position["contract"]["symbol"], "quantity": quantity,
+                "settlement_price": str(price), "settlement_fees": str(costs), "pnl": str(pnl), "capital": state["amount"],
+                "source_reference": source_reference.strip(), "actor": actor, "settled_at": now.isoformat(),
+                "expiry": position['contract']['expiry'], "closed": True, "recovery": True,
+                "entered_at": position['entered_at'], "evidence_kind": "operator_attestation",
+                "playbook_id": position.get("entry_plan", {}).get("playbook_id", "legacy_unattributed"),
+                "experiment_id": position.get("experiment_id", "legacy-unbound"),
+            })
+            self.store.save(connection, state)
+            self.store.finalize_learning(connection, state)
+            return state
+
     def status(self):
         with self.store.locked() as connection:
             state = self.store.latest(connection)
-            used = connection.execute("SELECT COALESCE(sum(reserved_usd),0) FROM banknifty_ai_calls").fetchone()[0]
+            used, rolling, today = connection.execute(
+                "SELECT COALESCE(sum(reserved_usd),0),COALESCE(sum(reserved_usd) FILTER(WHERE trading_date>=%s),0),"
+                "COALESCE(sum(reserved_usd) FILTER(WHERE trading_date=%s),0) FROM banknifty_ai_calls",
+                (self.clock().astimezone(IST).date() - timedelta(days=BUDGET_DAYS - 1), self.clock().astimezone(IST).date()),
+            ).fetchone()
             events = connection.execute(
                 "SELECT event_at,kind,detail FROM banknifty_events ORDER BY event_id DESC LIMIT 40"
             ).fetchall()
@@ -402,6 +472,9 @@ class BankNiftyService:
                 "SELECT trading_date,generated_at,report,delivery_status,delivery_attempts,"
                 "delivery_attempted_at,delivery_error FROM banknifty_daily_reports "
                 "ORDER BY trading_date DESC LIMIT 10"
+            ).fetchall()
+            settlements = connection.execute(
+                "SELECT trading_date,detail FROM banknifty_events WHERE kind='paper_settlement' ORDER BY event_id"
             ).fetchall()
         return {
             "available": self.enabled and self.market is not None and provider_ready(),
@@ -428,6 +501,7 @@ class BankNiftyService:
                     **report,
                     "day": str(day),
                     "generated_at": str(generated),
+                    "settlement_supplements": [detail for settlement_day, detail in settlements if settlement_day == day],
                     "delivery": {
                         "status": delivery,
                         "attempts": attempts,
@@ -439,7 +513,8 @@ class BankNiftyService:
             ],
             "session": {k: v for k, v in state.items() if k != "chart_cache"} if state else None,
             "budget": {
-                "trial_limit_usd": str(TRIAL_BUDGET),
+                "rolling_limit_usd": str(ROLLING_BUDGET), "rolling_days": BUDGET_DAYS,
+                "rolling_used_or_reserved_usd": str(rolling), "today_used_or_reserved_usd": str(today),
                 "daily_limit_usd": str(DAILY_BUDGET),
                 "used_or_reserved_usd": str(used),
                 "accounting": "conservative estimate, not invoice",
@@ -479,7 +554,8 @@ class BankNiftyService:
             remaining_cost if qty == position["quantity"] else remaining_cost * D(qty) / D(position["quantity"])
         )
         state["cash"] = str(D(state["cash"]) + proceeds)
-        state["realized_pnl"] = str(D(state["realized_pnl"]) + proceeds - entry_cost)
+        realized = (proceeds - entry_cost).quantize(D("0.00000001"))
+        state["realized_pnl"] = str(D(state["realized_pnl"]) + realized)
         position["entry_cost_remaining"] = str(remaining_cost - entry_cost)
         position["quantity"] -= qty
         position["last_exit_quote"] = quote["stamp"]
@@ -492,7 +568,7 @@ class BankNiftyService:
                 "quantity": qty,
                 "price": str(price),
                 "reason": reason,
-                "pnl": str(proceeds - entry_cost),
+                "pnl": str(realized),
                 "capital": state["amount"],
                 "quote": quote,
                 "position_id": position["id"],
@@ -643,7 +719,7 @@ class BankNiftyService:
                     raise ValueError("Five-minute cooldown after exit")
                 if (
                     not fresh(quote, now)
-                    or not 0 <= (now - datetime.fromisoformat(snapshot["spot_at"])).total_seconds() <= 120
+                    or not 0 <= (now - datetime.fromisoformat(snapshot["spot_at"])).total_seconds() <= 180
                 ):
                     raise ValueError("Decision or execution quote is stale")
                 pnl = D(state["realized_pnl"])
@@ -722,7 +798,7 @@ class BankNiftyService:
                 "SELECT market_snapshot FROM banknifty_market_history WHERE trading_date=%s "
                 "AND scan_state='live_observation' ORDER BY observed_at DESC LIMIT 1",
                 (now.astimezone(IST).date(),)).fetchone()
-        if not row or not 0 <= (now-datetime.fromisoformat(row[0]["spot_at"])).total_seconds() <= 120:
+        if not row or not 0 <= (now-datetime.fromisoformat(row[0]["spot_at"])).total_seconds() <= 180:
             raise ValueError("Independent observer snapshot missing or stale")
         return row[0]
 
@@ -736,10 +812,12 @@ class BankNiftyService:
             raise
 
     def run_once(self):
-        state = self.supervise()  # exits do not depend on model availability or remaining API credit
+        self.store.reconcile_interrupted_calls(self.clock())
+        state = self._monitor()  # Only the dedicated supervisor publishes its own heartbeat.
         now = self.clock()
         self._process_daily_report(state, now)
         if not state or state["state"] != "running" or not self.enabled or not entry_window(now):
+            heartbeat(self.store, "decision", now, "idle", {"state": state["state"] if state else "idle"})
             return {"state": state["state"] if state else "idle", "execution": "paper-only"}
         call_id = None
         try:
@@ -820,12 +898,14 @@ class BankNiftyService:
                     if decision
                 ]
             if len(snapshot["history"]) < 5:
+                heartbeat(self.store, "decision", self.clock(), "ok", {"state": "warming_up"})
                 return {"state": "warming_up"}
             if analysis and not analysis["ready"]:
                 raise ValueError("Chart context incomplete: " + "; ".join(analysis["issues"]))
             if not snapshot["candidates"]:
                 raise ValueError("No fresh liquid Bank Nifty option candidates")
             if not selection["plans"] and not snapshot["position"]:
+                heartbeat(self.store, "decision", self.clock(), "ok", {"state": "waiting_for_setup"})
                 return {"state": "waiting_for_setup", "ai_called": False}
             times = [datetime.fromisoformat(item["at"]) for item in snapshot["history"][-5:]]
             if any(not 0 < (b - a).total_seconds() <= 120 for a, b in itertools.pairwise(times)):
@@ -843,12 +923,13 @@ class BankNiftyService:
                 except (OSError, TimeoutError, ValueError, ArithmeticError) as error:
                     failure = failure_evidence(error)
                     failure["request_sha256"] = request_hash
-                    self.store.settle(call_id, None, None, failure)
+                    self.store.settle(call_id, None, None, failure, now=self.clock())
                     typed = AIFailure(failure["category"], dispatched=failure["dispatched"])
                     typed.evidence = failure
                     raise typed from None
-                self.store.settle(call_id, decision, usage)
+                self.store.settle(call_id, decision, usage, now=self.clock())
                 self._apply(decision, snapshot, call_id)
+            heartbeat(self.store, "decision", self.clock(), "ok", {"ai_called": bool(call_id), "scan_at": now.isoformat()})
             return {"state": "running", "ai_called": bool(call_id)}
         except (BrokerApiError, OSError, TimeoutError, ValueError, ArithmeticError) as error:
             is_ai_failure = bool(call_id and isinstance(error, AIFailure))
@@ -878,4 +959,5 @@ class BankNiftyService:
                 with self.store.locked() as connection:
                     connection.execute("UPDATE banknifty_ai_calls SET result=jsonb_set(result,'{alert_delivery}',%s::jsonb) "
                                        "WHERE call_id=%s", (json.dumps(delivery), call_id))
+            heartbeat(self.store, "decision", self.clock(), "failed", {"reason": "decision_blocked"})
             return {"state": "blocked", "detail": detail}

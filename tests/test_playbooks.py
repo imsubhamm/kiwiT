@@ -85,8 +85,7 @@ def test_all_playbooks_route_with_explicit_immutable_plan(kind, playbook):
 @pytest.mark.parametrize(
     "change,reason",
     [
-        ("week_conflict", "previous-week bias"),
-        ("frame_conflict", "regimes"),
+        ("frame_conflict", "Neither"),
         ("week_missing", "coverage"),
         ("stale", "stale"),
         ("expired", "expired"),
@@ -100,11 +99,12 @@ def test_router_rejects_unsupported_context(change, reason):
     if change == "week_conflict":
         a["previous_calendar_week"]["trend"] = "downward_bias"
     if change == "frame_conflict":
-        a["timeframes"]["15m"]["regime"] = "downtrend"
+        a["timeframes"]["5m"]["regime"] = "range"
+        a["timeframes"]["15m"]["regime"] = "range"
     if change == "week_missing":
         a["previous_calendar_week"] = {}
     if change == "stale":
-        a["at"] = (NOW - timedelta(seconds=121)).isoformat()
+        a["at"] = (NOW - timedelta(seconds=181)).isoformat()
     if change == "expired":
         a["patterns"][0]["at"] = (NOW - timedelta(seconds=301)).isoformat()
     if change == "future":
@@ -114,6 +114,13 @@ def test_router_rejects_unsupported_context(change, reason):
     selection = select_plans(snapshot, state, NOW)
     assert selection["plans"] == []
     assert any(reason in r for r in selection["evaluations"][0]["reasons"])
+
+
+def test_router_treats_weekly_bias_as_context_and_accepts_one_supporting_frame():
+    snapshot, state, _ = fixtures()
+    snapshot["chart_analysis"]["previous_calendar_week"]["trend"] = "downward_bias"
+    snapshot["chart_analysis"]["timeframes"]["15m"]["regime"] = "downtrend"
+    assert select_plans(snapshot, state, NOW)["plans"]
 
 
 @pytest.mark.parametrize(
