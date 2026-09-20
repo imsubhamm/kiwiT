@@ -17,6 +17,22 @@ release. Live broker orders remain disabled. No provider/model change is made.
 - Watchdog: checks the options worker heartbeats and operational blockers as well as
   web readiness. Authenticated operations readiness and the dashboard expose them.
 
+Automatic database wake-ups are limited by a local clock/calendar policy:
+`/live` is checked every minute without querying PostgreSQL. `/ready` and options
+diagnostics run every minute from 09:00 to 17:00 IST on regular sessions, and only
+at minute 00 outside that window. Unknown calendar years retain weekday daytime
+monitoring so an outdated calendar does not hide a problem; this does not authorize
+trading. Scheduled cash/options workers skip closed windows before constructing
+database or broker clients. Reports retain quarter-hour catch-up during the daytime
+window and hourly catch-up outside it. Manual CLI invocations without `--scheduled`
+still run immediately.
+
+This permits idle suspension between hourly off-hours checks. Off-hours database
+failure detection and report retries may take up to an hour; process liveness stays
+minute-level. Active dashboard polling, external probes of `/ready`, or manual
+database work can still keep Neon awake. External uptime checks should use `/live`
+for process liveness and reserve `/ready` for intentional dependency checks.
+
 Annual regular-session calendar: NSE F&O circular FAOP71777, 2026, with
 January 15 closure from amendment FAOP72262
 (https://nsearchives.nseindia.com/content/circulars/FAOP72262.pdf). Source:
