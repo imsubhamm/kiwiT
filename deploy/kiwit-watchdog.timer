@@ -1,9 +1,9 @@
 [Unit]
-Description=Run kiwiT readiness watchdog every minute
+Description=Minute-level liveness with scheduled database readiness checks
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=1min
+OnCalendar=*-*-* *:*:00 UTC
 AccuracySec=10s
 Persistent=true
 

@@ -2,7 +2,7 @@
 Description=Run kiwiT intraday paper worker every minute
 
 [Timer]
-OnCalendar=*-*-* 09..16:*:00 Asia/Kolkata
+OnCalendar=Mon..Fri *-*-* 09..16:*:00 Asia/Kolkata
 AccuracySec=5s
 Persistent=false
 Unit=kiwit-intraday.service
