@@ -125,8 +125,8 @@ def test_ai_schema_and_budget_bounds():
         parse_response(response(status="incomplete"))
     with pytest.raises(ValueError):
         parse_response(response({"action": "SHORT", "symbol": "X", "strategy": "momentum", "summary": ""}))
-    with pytest.raises(ValueError):
-        request_body({"huge": "x" * 21000})
+    with pytest.raises(ValueError, match="budget"):
+        request_body({"chart_analysis": {"blob": "x" * 30000}})
     body = json.loads(request_body({"spot": "55000"}))
     assert body["store"] is False and body["max_output_tokens"] == 1000 and "tools" not in body
 
@@ -136,7 +136,6 @@ def test_ai_schema_and_budget_bounds():
     [
         {"action": "BUY"},
         {"plan_id": "invented"},
-        {"symbol": "unexpected"},
         {"strategy": "momentum"},
         {"action": "EXIT"},
     ],
@@ -146,6 +145,63 @@ def test_ai_contract_rejects_inconsistent_action_and_plan(change):
     d.update(change)
     with pytest.raises(ValueError):
         parse_response(response(d))
+
+
+def test_hold_may_echo_open_position_symbol_and_ignores_extra_keys():
+    decision, _ = parse_response(response({
+        "action": "HOLD",
+        "symbol": "BANKNIFTY26SEP56500PE",
+        "plan_id": "",
+        "strategy": "no_trade",
+        "summary": "Keep the long put",
+        "extra": "ignored",
+    }))
+    assert decision["action"] == "HOLD"
+    assert decision["symbol"] == ""
+    assert decision["plan_id"] == ""
+    assert decision["strategy"] == "no_trade"
+
+
+def test_exit_keeps_position_symbol():
+    decision, _ = parse_response(response({
+        "action": "EXIT",
+        "symbol": "BANKNIFTY26SEP56500PE",
+        "plan_id": "",
+        "strategy": "no_trade",
+        "summary": "Stop hit on paper",
+    }))
+    assert decision["action"] == "EXIT"
+    assert decision["symbol"] == "BANKNIFTY26SEP56500PE"
+
+
+def test_open_position_prompt_stays_under_request_budget():
+    snapshot, state, _ = __import__("test_playbooks", fromlist=["fixtures"]).fixtures()
+    snapshot.update(
+        day=state["day"],
+        capital=state["amount"],
+        cash="87048.18800",
+        history=[{"at": NOW.isoformat(), "spot": "56500"}] * 20,
+        previous_decisions=[{"status": "applied", "action": "BUY", "symbol": "BANKNIFTY26SEP56500PE",
+                             "summary": "x" * 600}] * 3,
+        position={
+            "id": "filled",
+            "contract": snapshot["candidates"][0],
+            "quantity": 30,
+            "entry": "430.20",
+            "stop": "408.69",
+            "target": "473.22",
+            "entered_at": NOW.isoformat(),
+            "entry_plan": snapshot["strategy_selection"]["plans"][0],
+            "provenance": {"release": "test", "notes": "x" * 4000},
+            "entry_underlying": {"spot": "56500", "at": NOW.isoformat()},
+        },
+        learning_context={
+            "version": "banknifty-learning-v1",
+            "playbook_evidence": [{"playbook_id": "x", "closed_trades": 1}] * 8,
+            "recent_days": [{"day": f"2026-08-{i:02d}", "summary": {"realized_pnl": "0"}} for i in range(10, 20)],
+        },
+    )
+    assert len(request_body(snapshot)) < 20000
 
 
 def test_candle_fallback_excludes_forming_bars_and_stale_prices():
@@ -402,6 +458,7 @@ def test_ai_timeout_sends_an_operational_alert(db, monkeypatch):
     warm((service, market, analyst, clock))
     assert len(mailer.ai_failures) == 1
     assert mailer.ai_failures[0]["call_id"]
+    assert mailer.ai_failures[0]["category"] == "timeout"
     market.fail = True
     clock[0] += timedelta(minutes=5)
     service.run_once()

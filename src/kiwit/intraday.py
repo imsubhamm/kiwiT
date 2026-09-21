@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import smtplib
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
@@ -132,10 +133,12 @@ class SignalMailer:
         )
         return self._send(message)
 
-    def send_ai_failure(self, *, occurred_at: datetime, call_id: str, dashboard_url: str) -> tuple[str, str]:
+    def send_ai_failure(self, *, occurred_at: datetime, call_id: str, dashboard_url: str,
+                        category: str = "unspecified") -> tuple[str, str]:
         """Alert operators when a Bank Nifty AI decision cannot be completed."""
         if not self.configured:
             return "not_configured", "SMTP environment variables are not configured"
+        safe_category = category if re.fullmatch(r"[a-z0-9_]{1,64}", str(category or "")) else "unspecified"
         message = EmailMessage()
         message["Subject"] = "NitiQuant alert: Bank Nifty AI decision failed"
         message["From"] = self.sender
@@ -144,7 +147,7 @@ class SignalMailer:
             "A Bank Nifty paper-trading AI decision did not complete. No order was placed.\n\n"
             f"Time: {occurred_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
             f"Call ID: {call_id}\n"
-            "Recorded reason: AI unavailable or returned an incomplete result.\n\n"
+            f"Recorded reason: {safe_category}.\n\n"
             f"Review the session: {dashboard_url}#banknifty\n\n"
             "This is a paper-trading operational alert. No live broker order was placed."
         )

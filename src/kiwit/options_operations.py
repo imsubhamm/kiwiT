@@ -7,6 +7,20 @@ from .intraday import IST
 from .options_calendar import regular_session
 
 
+def decision_reason_codes(worker, *, running, local):
+    """Decision-loop health. Missing heartbeats in the first 150s after 09:30 IST are not stale."""
+    if not running or (local.hour, local.minute) >= (15, 0):
+        return []
+    open_elapsed = (local.hour * 3600 + local.minute * 60 + local.second) - (9 * 3600 + 30 * 60)
+    if not worker:
+        return ["DECISION_HEARTBEAT_STALE"] if open_elapsed > 150 else []
+    if worker["age_seconds"] > 150:
+        return ["DECISION_HEARTBEAT_STALE"]
+    if worker["status"] == "failed":
+        return ["DECISION_WORKER_FAILED"]
+    return []
+
+
 def heartbeat(store, worker, now, status, detail=None):
     with store.locked() as connection:
         connection.execute(
@@ -103,12 +117,7 @@ def diagnostics(store, now):
         observer_stamp = health.get("observer", {}).get("detail", {}).get("spot_at")
         if observer_stamp and (now - datetime.fromisoformat(observer_stamp)).total_seconds() > 180:
             issues.append("OBSERVED_MARKET_DATA_STALE")
-        if running and (local.hour, local.minute) < (15, 0):
-            worker = health.get("decision")
-            if not worker or worker["age_seconds"] > 150:
-                issues.append("DECISION_HEARTBEAT_STALE")
-            elif worker["status"] == "failed":
-                issues.append("DECISION_WORKER_FAILED")
+        issues.extend(decision_reason_codes(health.get("decision"), running=running, local=local))
     if len(calls) == 3 and all(status == "failed" for status, _ in calls):
         issues.append("AI_CONSECUTIVE_FAILURES")
     if state and state.get("position"):
