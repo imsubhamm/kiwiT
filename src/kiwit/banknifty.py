@@ -951,13 +951,22 @@ class BankNiftyService:
                         connection, current, "blocked", {"reason": detail, "call_id": str(call_id) if call_id else None}
                     )
             if is_ai_failure:
+                category = (getattr(error, "evidence", None) or {}).get("category") or "unspecified"
                 delivery, _delivery_error = self.mailer.send_ai_failure(
                     occurred_at=self.clock(),
                     call_id=str(call_id),
                     dashboard_url=os.getenv("KIWIT_DASHBOARD_URL", "https://kiwit.tathyaforge.in/dashboard"),
+                    category=category,
                 )
                 with self.store.locked() as connection:
                     connection.execute("UPDATE banknifty_ai_calls SET result=jsonb_set(result,'{alert_delivery}',%s::jsonb) "
                                        "WHERE call_id=%s", (json.dumps(delivery), call_id))
-            heartbeat(self.store, "decision", self.clock(), "failed", {"reason": "decision_blocked"})
+                heartbeat(self.store, "decision", self.clock(), "failed", {"reason": category})
+            elif isinstance(error, AIFailure):
+                category = (getattr(error, "evidence", None) or {}).get("category") or "request_validation"
+                heartbeat(self.store, "decision", self.clock(), "ok",
+                          {"reason": category, "ai_called": False, "scan_at": now.isoformat()})
+            else:
+                heartbeat(self.store, "decision", self.clock(), "ok",
+                          {"reason": "entry_rejected", "ai_called": bool(call_id), "scan_at": now.isoformat()})
             return {"state": "blocked", "detail": detail}

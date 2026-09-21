@@ -25,8 +25,9 @@ EXIT means close the existing long position, never open a short. Do not invent
 symbols, prices, news or evidence. strategy_selection supplies versioned entry plans
 and rejected playbook reasons. For BUY, select exactly one supplied plan_id, symbol
 and strategy; do not invent or modify a plan. Without an eligible plan, HOLD.
-For HOLD use empty plan_id/symbol and no_trade. For EXIT use empty plan_id,
-no_trade and the existing position symbol. With an open position, only HOLD/EXIT.
+For HOLD use empty plan_id, no_trade, and either an empty symbol or the existing
+position symbol; both are HOLD. For EXIT use empty plan_id, no_trade and the
+existing position symbol. With an open position, only HOLD/EXIT.
 If data is inadequate, contradictory or no clear setup exists, HOLD/no_trade.
 Consider underlying trend, spread, expiry and premium behaviour. Never force a trade.
 chart_analysis contains versioned numerical evidence from completed candles only:
@@ -61,8 +62,109 @@ SCHEMA = {
 }
 
 
-def request_body(snapshot):
-    body = json.dumps(
+REQUEST_BUDGET = 20_000
+
+
+def compact_decision_snapshot(snapshot):
+    """Bound the paid prompt. Full tapes stay in market history, not in the model request."""
+    snapshot = snapshot or {}
+    position = snapshot.get("position")
+    compact_position = None
+    if position:
+        contract = position.get("contract") or {}
+        plan = position.get("entry_plan") or {}
+        compact_position = {
+            "id": position.get("id"),
+            "symbol": contract.get("symbol") or position.get("symbol"),
+            "kind": contract.get("kind") or plan.get("kind") or position.get("kind"),
+            "quantity": position.get("quantity"),
+            "entry": position.get("entry"),
+            "stop": position.get("stop"),
+            "target": position.get("target"),
+            "entered_at": position.get("entered_at"),
+            "strategy": plan.get("strategy") or position.get("strategy"),
+            "playbook_id": plan.get("playbook_id"),
+        }
+    selection = snapshot.get("strategy_selection") or {}
+    plans = [
+        {key: plan[key] for key in (
+            "id", "playbook_id", "strategy", "symbol", "kind", "quantity",
+            "planned_fill", "max_fill", "expires_at", "pattern_id",
+        ) if key in plan}
+        for plan in selection.get("plans") or []
+    ]
+    evaluations = [
+        {
+            "playbook_id": item.get("playbook_id"),
+            "eligible": item.get("eligible"),
+            "reasons": (item.get("reasons") or [])[:3],
+        }
+        for item in selection.get("evaluations") or []
+    ]
+    candidates = []
+    for contract in snapshot.get("candidates") or []:
+        quote = contract.get("quote") or {}
+        candidates.append({
+            "symbol": contract.get("symbol"),
+            "kind": contract.get("kind"),
+            "strike": contract.get("strike"),
+            "expiry": contract.get("expiry"),
+            "quote": {
+                "bid": quote.get("bid"),
+                "ask": quote.get("ask"),
+                "stamp": quote.get("stamp"),
+                "bid_size": quote.get("bid_size"),
+                "ask_size": quote.get("ask_size"),
+            },
+        })
+    analysis = snapshot.get("chart_analysis") or {}
+    learning = snapshot.get("learning_context") or {}
+    previous = [
+        {
+            "status": item.get("status"),
+            "action": item.get("action"),
+            "symbol": item.get("symbol"),
+            "summary": str(item.get("summary") or "")[:240],
+        }
+        for item in snapshot.get("previous_decisions") or []
+    ]
+    return {
+        "spot": snapshot.get("spot"),
+        "spot_at": snapshot.get("spot_at"),
+        "day": snapshot.get("day"),
+        "history": (snapshot.get("history") or [])[-8:],
+        "position": compact_position,
+        "candidates": candidates,
+        "chart_analysis": {key: value for key, value in analysis.items() if key not in {"chart_bars", "chart_cache"}},
+        "strategy_selection": {
+            "version": selection.get("version"),
+            "at": selection.get("at"),
+            "plans": plans,
+            "evaluations": evaluations,
+        },
+        "learning_context": {
+            "version": learning.get("version"),
+            "mode": learning.get("mode"),
+            "playbook_evidence": learning.get("playbook_evidence") or [],
+            "recent_days": (learning.get("recent_days") or [])[:5],
+            "limits": learning.get("limits"),
+        },
+        "previous_decisions": previous,
+        "capital": snapshot.get("capital"),
+        "cash": snapshot.get("cash"),
+        "loss_pct": snapshot.get("loss_pct"),
+        "profit_pct": snapshot.get("profit_pct"),
+        "trade_stop_pct": snapshot.get("trade_stop_pct"),
+        "trade_target_pct": snapshot.get("trade_target_pct"),
+        "entries": snapshot.get("entries"),
+        "realized_pnl": snapshot.get("realized_pnl"),
+        "experiment_id": snapshot.get("experiment_id"),
+        "provenance": snapshot.get("provenance"),
+    }
+
+
+def _encode_request(snapshot):
+    return json.dumps(
         {
             "model": MODEL,
             "store": False,
@@ -73,8 +175,27 @@ def request_body(snapshot):
             "text": {"format": {"type": "json_schema", "name": "paper_decision", "strict": True, "schema": SCHEMA}},
         }
     ).encode()
+
+
+def request_body(snapshot):
+    payload = compact_decision_snapshot(snapshot)
+    body = _encode_request(payload)
     # Byte bound is deliberately conservative for token budgeting, including schema.
-    if len(body) > 20_000:
+    if len(body) <= REQUEST_BUDGET:
+        return body
+    payload = dict(payload)
+    payload["learning_context"] = {"version": (payload.get("learning_context") or {}).get("version"),
+                                   "omitted": "request_budget"}
+    payload["previous_decisions"] = []
+    selection = dict(payload.get("strategy_selection") or {})
+    selection["evaluations"] = [
+        {"playbook_id": item.get("playbook_id"), "eligible": item.get("eligible"),
+         "reasons": (item.get("reasons") or [])[:1]}
+        for item in selection.get("evaluations") or []
+    ]
+    payload["strategy_selection"] = selection
+    body = _encode_request(payload)
+    if len(body) > REQUEST_BUDGET:
         raise ValueError("AI context exceeds trial request budget")
     return body
 
@@ -89,9 +210,14 @@ def parse_response(payload):
         for c in item.get("content", [])
         if c.get("type") == "output_text"
     ]
-    result = json.loads("".join(blocks))
-    if set(result) != set(SCHEMA["required"]) or not all(isinstance(v, str) for v in result.values()):
+    parsed = json.loads("".join(blocks))
+    try:
+        result = {key: parsed[key] for key in SCHEMA["required"]}
+    except (KeyError, TypeError):
+        raise ValueError("Invalid AI decision shape") from None
+    if not all(isinstance(value, str) for value in result.values()):
         raise ValueError("Invalid AI decision shape")
+    result = {key: value.strip() for key, value in result.items()}
     if result["action"] not in ("HOLD", "BUY", "EXIT") or result["strategy"] not in (
         "momentum",
         "reversal",
@@ -103,12 +229,12 @@ def parse_response(payload):
     if result["action"] == "BUY":
         if not result["plan_id"] or not result["symbol"] or result["strategy"] == "no_trade":
             raise ValueError("BUY requires a supplied entry plan")
-    elif (
-        result["plan_id"]
-        or result["strategy"] != "no_trade"
-        or (result["action"] == "HOLD" and result["symbol"])
-        or (result["action"] == "EXIT" and not result["symbol"])
-    ):
+    elif result["action"] == "HOLD":
+        if result["plan_id"] or result["strategy"] != "no_trade":
+            raise ValueError("HOLD/EXIT must not select an entry plan")
+        result["symbol"] = ""
+        result["plan_id"] = ""
+    elif result["plan_id"] or result["strategy"] != "no_trade" or not result["symbol"]:
         raise ValueError("HOLD/EXIT must not select an entry plan")
     usage = payload["usage"]
     incoming, outgoing = usage["input_tokens"], usage["output_tokens"]
@@ -169,11 +295,12 @@ class OpenAIPaperAnalyst:
         try:
             if PROVIDER == "openai":
                 return request_body(snapshot)
+            compact = compact_decision_snapshot(snapshot)
             body = json.dumps({"model": MODEL, "messages": [
                 {"role": "system", "content": PROMPT + " Return only JSON matching this schema: " + json.dumps(SCHEMA)},
-                {"role": "user", "content": json.dumps(snapshot, default=str)}],
+                {"role": "user", "content": json.dumps(compact, default=str)}],
                 "response_format": {"type": "json_object"}, "max_tokens": 1000, "stream": False}).encode()
-            if len(body) > 20000:
+            if len(body) > REQUEST_BUDGET:
                 raise ValueError("size")
             return body
         except (ValueError, TypeError):

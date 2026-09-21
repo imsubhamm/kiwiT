@@ -2,7 +2,7 @@
 # ruff: noqa: F811
 import io
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -13,8 +13,54 @@ from test_chart_analysis import NOW as CHART_NOW
 from test_chart_analysis import payload, rows
 
 from kiwit.chart_analysis import history_context
+from kiwit.intraday import IST, SignalMailer
 from kiwit.options_ai import AIFailure, OpenAIPaperAnalyst
 from kiwit.options_calendar import regular_session
+from kiwit.options_operations import decision_reason_codes
+
+
+def test_decision_reason_codes_grace_and_fail_closed_heartbeat():
+    open_tick = datetime(2026, 9, 21, 9, 30, 20, tzinfo=IST)
+    later = datetime(2026, 9, 21, 10, 0, tzinfo=IST)
+    assert decision_reason_codes(None, running=True, local=open_tick) == []
+    assert decision_reason_codes(None, running=True, local=later) == ["DECISION_HEARTBEAT_STALE"]
+    assert decision_reason_codes({"status": "ok", "age_seconds": 30}, running=True, local=later) == []
+    assert decision_reason_codes({"status": "failed", "age_seconds": 15}, running=True, local=later) == [
+        "DECISION_WORKER_FAILED"
+    ]
+    assert decision_reason_codes(
+        {"status": "ok", "age_seconds": 15, "detail": {"reason": "entry_rejected"}},
+        running=True,
+        local=later,
+    ) == []
+    assert decision_reason_codes({"status": "failed", "age_seconds": 10}, running=True, local=open_tick) == [
+        "DECISION_WORKER_FAILED"
+    ]
+
+
+def test_ai_failure_mail_includes_safe_category():
+    sent = []
+    mailer = SignalMailer()
+    mailer.host = "smtp.example"
+    mailer.sender = "alerts@example.test"
+    mailer.recipients = ("ops@example.test",)
+    mailer._send = lambda message: sent.append(message.get_content()) or ("sent", "")
+    mailer.send_ai_failure(
+        occurred_at=datetime(2026, 9, 21, 10, 10, tzinfo=IST),
+        call_id="1edd40e8-ef91-4a0d-8765-5a312cb95ae0",
+        dashboard_url="https://kiwit.example/dashboard",
+        category="response_validation",
+    )
+    assert "response_validation" in sent[0]
+    assert "unavailable or returned an incomplete result" not in sent[0]
+    mailer.send_ai_failure(
+        occurred_at=datetime(2026, 9, 21, 10, 10, tzinfo=IST),
+        call_id="x",
+        dashboard_url="https://kiwit.example/dashboard",
+        category="drop table;",
+    )
+    assert "unspecified" in sent[1]
+    assert "drop table" not in sent[1]
 
 
 def test_verified_holiday_week_is_complete_and_missing_session_still_blocks():
@@ -53,7 +99,9 @@ def test_local_preflight_failure_does_not_reserve_or_dispatch(desk, monkeypatch)
     original = market.snapshot
     def oversized(now):
         result = original(now)
-        result['oversized'] = 'x' * 25000
+        analysis = dict(result.get('chart_analysis') or {})
+        analysis['blob'] = 'x' * 30000
+        result['chart_analysis'] = analysis
         return result
     market.snapshot = oversized
     with patch('kiwit.options_ai.urllib.request.build_opener') as network:
@@ -273,6 +321,34 @@ def test_decision_heartbeat_is_required_during_a_running_session(desk):
     service.observe()
     service.supervise()
     assert 'DECISION_HEARTBEAT_STALE' in diagnostics(service.store, clock[0])['reason_codes']
+
+
+def test_decision_heartbeat_has_grace_at_session_open(desk):
+    from kiwit.options_operations import diagnostics
+
+    service, _, _, clock = desk
+    clock[0] = NOW.replace(hour=4, minute=0, second=20)
+    service.start(100000, 5, 10, 'test')
+    service.observe()
+    service.supervise()
+    assert 'DECISION_HEARTBEAT_STALE' not in diagnostics(service.store, clock[0])['reason_codes']
+
+
+def test_fail_closed_entry_does_not_page_as_decision_worker_failed(desk):
+    from kiwit.options_operations import diagnostics
+
+    service, _, analyst, clock = desk
+    original = analyst.decide
+
+    def wrong_contract(snapshot):
+        decision, usage = original(snapshot)
+        decision['symbol'] = 'NIFTY-FAKE'
+        return decision, usage
+
+    analyst.decide = wrong_contract
+    assert warm(desk)['position'] is None
+    codes = diagnostics(service.store, clock[0])['reason_codes']
+    assert 'DECISION_WORKER_FAILED' not in codes
 
 
 def test_rolling_budget_renews_without_erasing_historical_charges(desk):
