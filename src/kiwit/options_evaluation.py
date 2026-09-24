@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal as D
 
 from .intraday import IST
-from .options_risk import fees, fill_price
+from .options_risk import BROKER_COST_VERSION, fees, fill_price
 from .playbooks import VERSION, fingerprint
 
 
@@ -75,11 +75,12 @@ def counterfactual(plan, tape, at, horizon_minutes, extra_bps=0):
                 continue
             exit_price = fill_price(exit_contract['quote'], contract, False)
             bought, sold = entry * quantity, exit_price * quantity
-            baseline_fees = fees(bought) + fees(sold)
+            baseline_fees = fees(bought, "buy") + fees(sold, "sell")
             stress_cost = (bought + sold) * D(extra_bps) / 10000
             return {'status': 'observed', 'entered_at': entered_at.isoformat(), 'exited_at': exited_at.isoformat(),
                     'quantity': quantity, 'gross_pnl': str(sold-bought),
-                    'illustrative_fees': str(baseline_fees), 'extra_cost': str(stress_cost),
+                    'broker_costs': str(baseline_fees), 'cost_model': BROKER_COST_VERSION,
+                    'extra_cost': str(stress_cost),
                     'net_pnl': str(sold-bought-baseline_fees-stress_cost)}
         return {'status': 'excluded', 'reason': 'future_exit_quote_or_depth_missing'}
     return {'status': 'excluded', 'reason': 'future_entry_quote_or_depth_missing'}
@@ -130,9 +131,101 @@ def compare(bundle, *, horizon_minutes=15, extra_bps=0):
             'experiments': [{**g, 'ai': str(g['ai']), 'baseline': str(g['baseline']),
                              'difference': str(g['ai']-g['baseline']), 'experiment_id': key} for key, g in groups.items()],
             'profitability_validated': False,
+            'cost_model': BROKER_COST_VERSION,
             'limitations': ['Overlapping fixed-horizon opportunities; not portfolio returns',
-                            'Costs are illustrative plus stated stress; require broker cost reconciliation',
+                            'Cost schedule is versioned; contract-note reconciliation remains authoritative',
                             'Quote/depth gaps excluded; report exclusions before interpreting paired samples']}
+
+
+def rule_matrix(bundle, *, horizon_minutes=15):
+    """Apply cap/loss scenarios to the same observed opportunity stream."""
+    opportunities = []
+    for call in bundle.get('calls', []):
+        result = call.get('result') or {}
+        at_value = result.get('settled_at')
+        plans = call.get('snapshot', {}).get('strategy_selection', {}).get('plans', [])
+        if not at_value or not plans:
+            continue
+        at = stamp(at_value)
+        observed = counterfactual(plans[0], bundle.get('market_tape', []), at, horizon_minutes)
+        if observed['status'] == 'observed':
+            opportunities.append({'at': at, 'day': str(call['trading_date']),
+                                  'capital': D(str(call['snapshot']['capital'])),
+                                  'net_pnl': D(observed['net_pnl'])})
+    opportunities.sort(key=lambda row: row['at'])
+    rows = []
+    for cap in (4, 6, 10):
+        for loss_pct in (2, 3, 5):
+            daily = {}
+            selected = []
+            for item in opportunities:
+                state = daily.setdefault(item['day'], {'entries': 0, 'pnl': D(0)})
+                if state['entries'] >= cap or state['pnl'] <= -item['capital'] * D(loss_pct) / 100:
+                    continue
+                state['entries'] += 1
+                state['pnl'] += item['net_pnl']
+                selected.append(item)
+            rows.append({'entry_cap': cap, 'daily_loss_pct': loss_pct, 'observed_opportunities': len(selected),
+                         'net_pnl': str(sum((item['net_pnl'] for item in selected), D(0)))})
+    return {'format': 'options-rule-matrix-v1', 'horizon_minutes': horizon_minutes,
+            'observed_opportunities': len(opportunities), 'scenarios': rows,
+            'limitations': ['Sequential fixed-horizon opportunities may overlap; this compares rules, not portfolio returns',
+                            'Missing contract quotes remain excluded and are never imputed']}
+
+
+def exit_matrix(bundle):
+    """Compare playbook-specific holding horizons on identical retained quotes."""
+    groups = {}
+    total = excluded = 0
+    for call in bundle.get('calls', []):
+        result = call.get('result') or {}
+        at_value = result.get('settled_at')
+        for plan in call.get('snapshot', {}).get('strategy_selection', {}).get('plans', []):
+            if not at_value:
+                continue
+            for horizon in plan.get('exit_experiments', {}).get('max_hold_minutes', []):
+                total += 1
+                observed = counterfactual(plan, bundle.get('market_tape', []), stamp(at_value), horizon)
+                key = (plan['playbook_id'], horizon)
+                group = groups.setdefault(key, {'playbook_id': key[0], 'horizon_minutes': horizon,
+                                                'observations': 0, 'net_pnl': D(0)})
+                if observed['status'] != 'observed':
+                    excluded += 1
+                    continue
+                group['observations'] += 1
+                group['net_pnl'] += D(observed['net_pnl'])
+    rows = [{**value, 'net_pnl': str(value['net_pnl'])} for value in groups.values()]
+    return {'format': 'options-exit-matrix-v1', 'attempted': total, 'excluded': excluded, 'scenarios': rows,
+            'promotion_eligible': False}
+
+
+def cost_reconciliation(bundle):
+    estimated = {}
+    for event in bundle.get('events', []):
+        detail = event.get('detail') or {}
+        if event.get('kind') == 'paper_entry':
+            position_id = (detail.get('position') or {}).get('id')
+            costs = detail.get('entry_costs') or {}
+        elif event.get('kind') == 'paper_exit':
+            position_id = detail.get('position_id')
+            costs = detail.get('exit_costs') or {}
+        else:
+            continue
+        if position_id and costs.get('total') is not None:
+            estimated[position_id] = estimated.get(position_id, D(0)) + D(str(costs['total']))
+    actual = {}
+    for row in bundle.get('broker_cost_evidence', []):
+        actual[row['position_id']] = actual.get(row['position_id'], D(0)) + D(str(row['actual_cost']))
+    rows = []
+    for position_id in sorted(set(estimated) | set(actual)):
+        estimate = estimated.get(position_id)
+        invoice = actual.get(position_id)
+        rows.append({'position_id': position_id, 'estimated_cost': str(estimate) if estimate is not None else None,
+                     'actual_cost': str(invoice) if invoice is not None else None,
+                     'difference': str(estimate-invoice) if estimate is not None and invoice is not None else None,
+                     'status': 'reconciled' if estimate is not None and invoice is not None else 'missing_evidence'})
+    return {'format': 'options-cost-reconciliation-v1', 'cost_model': BROKER_COST_VERSION, 'positions': rows,
+            'reconciled': sum(row['status'] == 'reconciled' for row in rows)}
 
 
 def session_acceptance(bundle, day, release):

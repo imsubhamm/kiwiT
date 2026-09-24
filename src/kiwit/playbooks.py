@@ -8,71 +8,79 @@ from decimal import Decimal as D
 from .chart_analysis import VERSION as CHART_VERSION
 from .options_risk import fill_price, quantity_for, sizing_diagnostics, trade_limits
 
-VERSION = "banknifty-selector-v3-broader"
+VERSION = "banknifty-selector-v4-evidence"
 PLAYBOOKS = (
     {
-        "id": "opening_range_breakout_v3",
+        "id": "opening_range_breakout_v4",
         "name": "Opening-range breakout",
         "pattern": "opening_range_breakout",
         "strategy": "momentum",
         "regime": "trend",
         "max_hold_minutes": None,
+        "exit_experiments": {"risk_reward": ["1.5R", "2R", "2.5R"], "max_hold_minutes": [15, 30, 45]},
     },
     {
-        "id": "breakout_retest_v3",
+        "id": "breakout_retest_v4",
         "name": "Breakout / retest",
         "pattern": "breakout_retest",
         "strategy": "momentum",
         "regime": "trend",
         "max_hold_minutes": None,
+        "exit_experiments": {"risk_reward": ["1.5R", "2R", "2.5R"], "max_hold_minutes": [15, 30, 45]},
     },
     {
-        "id": "trend_pullback_v3",
+        "id": "trend_pullback_v4",
         "name": "Trend pullback",
         "pattern": "ema_pullback",
         "strategy": "momentum",
         "regime": "trend",
         "max_hold_minutes": None,
+        "exit_experiments": {"risk_reward": ["1.5R", "2R", "2.5R"], "max_hold_minutes": [15, 30, 45]},
     },
     {
-        "id": "range_reversal_v3",
+        "id": "range_reversal_v4",
         "name": "Range reversal",
         "pattern": "range_rejection",
         "strategy": "reversal",
         "regime": "range",
         "max_hold_minutes": None,
+        "exit_experiments": {"risk_reward": ["1R", "1.5R", "2R"], "max_hold_minutes": [10, 20, 30]},
     },
     {
-        "id": "previous_day_breakout_v3",
+        "id": "previous_day_breakout_v4",
         "name": "Previous-day breakout",
         "pattern": "previous_day_breakout",
         "strategy": "momentum",
         "regime": "trend",
         "max_hold_minutes": None,
+        "exit_experiments": {"risk_reward": ["1.5R", "2R", "2.5R"], "max_hold_minutes": [15, 30, 45]},
     },
     {
-        "id": "engulfing_reversal_v3",
+        "id": "engulfing_reversal_v4",
         "name": "Engulfing reversal",
         "pattern": "engulfing",
         "strategy": "reversal",
         "regime": "any",
         "max_hold_minutes": None,
+        "exit_experiments": {"risk_reward": ["1R", "1.5R", "2R"], "max_hold_minutes": [10, 20, 30]},
     },
     {
-        "id": "hammer_reversal_v3",
+        "id": "hammer_reversal_v4",
         "name": "Hammer reversal",
         "pattern": "hammer",
         "strategy": "reversal",
         "regime": "range",
         "max_hold_minutes": None,
+        "exit_experiments": {"risk_reward": ["1R", "1.5R", "2R"], "max_hold_minutes": [10, 20, 30]},
     },
     {
-        "id": "shooting_star_reversal_v3",
+        "id": "shooting_star_reversal_v4",
         "name": "Shooting-star reversal",
         "pattern": "shooting_star",
         "strategy": "reversal",
         "regime": "range",
         "max_hold_minutes": None,
+        "exit_experiments": {"risk_reward": ["1R", "1.5R", "2R"], "max_hold_minutes": [10, 20, 30]},
     },
 )
 
@@ -104,6 +112,18 @@ def route_reasons(analysis, pattern, playbook, now):
     )
     if required and not any(frames.get(frame, {}).get("regime") == required for frame in ("5m", "15m")):
         reasons.append("Neither 5m nor 15m regime supports this playbook")
+    if playbook["strategy"] == "reversal":
+        supportive = {"range", "uptrend" if direction == "bullish" else "downtrend"}
+        if frames.get("5m", {}).get("regime") not in supportive:
+            reasons.append("5m regime does not confirm the reversal")
+        if frames.get("15m", {}).get("regime") not in supportive:
+            reasons.append("15m regime opposes the reversal")
+    rsi_values = [D(str(frames[frame]["rsi14"])) for frame in ("5m", "15m")
+                  if frames.get(frame, {}).get("rsi14") is not None]
+    if direction == "bullish" and any(rsi >= 75 for rsi in rsi_values):
+        reasons.append("Bullish entry blocked by RSI exhaustion")
+    if direction == "bearish" and any(rsi <= 25 for rsi in rsi_values):
+        reasons.append("Bearish entry blocked by RSI exhaustion")
     week = analysis.get("previous_calendar_week") or {}
     if week.get("coverage", {}).get("status") != "complete":
         reasons.append("Previous-week coverage incomplete")
@@ -140,17 +160,20 @@ def select_plans(snapshot, state, now):
         reasons, chosen = [], None
         for pattern in patterns:
             rejected = route_reasons(analysis, pattern, playbook, now)
+            if snapshot.get("event_context", {}).get("risk") == "high":
+                rejected.append("Verified high-impact event window blocks entry")
             if rejected:
                 reasons.extend(rejected)
                 continue
             kind = "CE" if pattern["direction"] == "bullish" else "PE"
-            atr = analysis["timeframes"]["5m"].get("atr14")
-            if not atr or not D(str(atr)).is_finite() or atr <= 0:
+            atr_value = analysis["timeframes"]["5m"].get("atr14")
+            atr = D(str(atr_value)) if atr_value is not None else D(0)
+            if not atr.is_finite() or atr <= 0:
                 reasons.append("ATR unavailable for entry price bound")
                 continue
-            trigger = pattern["observed_close"]
-            invalidation = pattern["invalidation"]
-            chase = trigger + (0.5 * atr if kind == "CE" else -0.5 * atr)
+            trigger = D(str(pattern["observed_close"]))
+            invalidation = D(str(pattern["invalidation"]))
+            chase = trigger + (D("0.25") * atr if kind == "CE" else -D("0.25") * atr)
             spot = D(snapshot["spot"])
             if not spot.is_finite() or not (
                 invalidation < trigger <= spot <= chase if kind == "CE" else chase <= spot <= trigger < invalidation
@@ -160,7 +183,8 @@ def select_plans(snapshot, state, now):
             contracts = [
                 c
                 for c in snapshot["candidates"]
-                if c["kind"] == kind and c["expiry"] > state["day"] and quote_ok(c["quote"], now)
+                if c.get("selection_eligible", True)
+                and c["kind"] == kind and c["expiry"] > state["day"] and quote_ok(c["quote"], now)
             ]
             contracts.sort(
                 key=lambda c: (
@@ -195,9 +219,9 @@ def select_plans(snapshot, state, now):
                     "pattern_at": pattern["at"],
                     "created_at": now.isoformat(),
                     "expires_at": expires.isoformat(),
-                    "underlying_trigger": trigger,
-                    "underlying_invalidation": invalidation,
-                    "underlying_max_chase": chase,
+                    "underlying_trigger": str(trigger),
+                    "underlying_invalidation": str(invalidation),
+                    "underlying_max_chase": str(chase),
                     "max_fill": str(fill_price(capped, contract, True)),
                     "planned_fill": str(fill),
                     "quantity": qty,
@@ -206,7 +230,26 @@ def select_plans(snapshot, state, now):
                     "loss_pct": str(trade_limits(state)[0]),
                     "profit_pct": str(trade_limits(state)[1]),
                     "max_hold_minutes": playbook["max_hold_minutes"],
-                    "exit_policy": "risk_and_session_only_v2",
+                    "exit_policy": "deterministic_safety_v3_with_offline_playbook_variants",
+                    "exit_experiments": playbook["exit_experiments"],
+                }
+                spread = (D(contract["quote"]["ask"]) - D(contract["quote"]["bid"])) / D(contract["quote"]["ask"])
+                quote_age = (now - datetime.fromisoformat(contract["quote"]["stamp"])).total_seconds()
+                headroom = (D(chosen["max_fill"]) - fill) / fill
+                chase_remaining = (chase - spot) / atr if kind == "CE" else (spot - chase) / atr
+                invalidation_distance = abs(spot - invalidation) / atr
+                chosen["decision_context"] = {
+                    "plan_valid_now": True,
+                    "quote_age_seconds": quote_age,
+                    "spread_pct": str(spread * 100),
+                    "price_headroom_pct": str(headroom * 100),
+                    "price_headroom_band": "tight" if headroom < D(".0025") else "available",
+                    "invalidation_distance_atr": str(invalidation_distance),
+                    "chase_allowance_atr": "0.25",
+                    "chase_remaining_atr": str(chase_remaining),
+                    "chase_remaining_band": "tight" if chase_remaining < D(".05") else "available",
+                    "event_risk": snapshot.get("event_context", {}).get("risk", "unknown"),
+                    "feature_coverage": snapshot.get("option_feature_coverage", {}),
                 }
                 chosen["id"] = fingerprint(chosen)
                 break

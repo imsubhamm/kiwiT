@@ -33,7 +33,7 @@ def replay_fills(bundle):
                 plan = validate_plan(call['result']['decision'], snapshot, state, detail['quote'],
                                      position['entry_underlying'], datetime.fromisoformat(position['entered_at']))
                 price = fill_price(detail['quote'], contract, True)
-                cost = price * plan['quantity'] + fees(price * plan['quantity'])
+                cost = price * plan['quantity'] + fees(price * plan['quantity'], 'buy')
                 checks = (plan == position['entry_plan'], position['quantity'] == plan['quantity'],
                           position['contract'] == {k: v for k, v in contract.items() if k != 'quote'},
                           D(position['entry']) == price, D(position['entry_cost_remaining']) == cost,
@@ -50,7 +50,7 @@ def replay_fills(bundle):
                 if kind == 'paper_exit':
                     price = fill_price(detail['quote'], contract, False)
                     expected_qty = min(position['quantity'], detail['quote']['bid_size']) // contract['lot'] * contract['lot']
-                    costs = fees(price * quantity)
+                    costs = fees(price * quantity, 'sell')
                     if quantity != expected_qty or D(detail['price']) != price:
                         status = 'mismatch'
                 else:

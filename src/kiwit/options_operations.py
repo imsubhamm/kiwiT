@@ -104,6 +104,14 @@ def diagnostics(store, now):
         owned = connection.execute(
             "SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tableowner=current_user)"
         ).fetchone()[0]
+        tracked = connection.execute(
+            "SELECT count(*) FROM banknifty_tracked_contracts WHERE trading_date=%s AND retain_until>=%s",
+            (day, now),
+        ).fetchone()[0]
+        incidents = connection.execute(
+            "SELECT observed_at,status,reason_code,detail FROM banknifty_worker_incidents "
+            "WHERE trading_date=%s ORDER BY observed_at DESC LIMIT 10", (day,),
+        ).fetchall()
     health = {w: {"at": at.isoformat(), "status": status, "age_seconds": (now-at).total_seconds(), "detail": detail}
               for w, at, status, detail in workers}
     issues = []
@@ -141,5 +149,10 @@ def diagnostics(store, now):
             "unresolved_ai_calls": unresolved_calls,
             "interrupted_ai_calls": interrupted_calls[0], "interrupted_ai_reserved_usd": str(interrupted_calls[1]),
             "recovery_trades": outcome[0], "recovery_pnl": str(outcome[1]),
+            "tracked_contracts": tracked,
+            "recent_worker_incidents": [
+                {"at": at.isoformat(), "status": status, "reason_code": code, "detail": detail}
+                for at, status, code, detail in incidents
+            ],
             "funnel": dict(counts), "rejection_counts": [
                 {"playbook_id": p, "reason": r, "count": n} for p,r,n in reasons]}

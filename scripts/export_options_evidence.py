@@ -28,6 +28,9 @@ def main():
             'calls': records('SELECT call_id,trading_date,created_at,state,snapshot,result FROM banknifty_ai_calls ORDER BY slot'),
             'events': records('SELECT event_id,trading_date,event_at,kind,detail FROM banknifty_events ORDER BY event_id'),
             'outcomes': records('SELECT * FROM banknifty_trade_outcomes ORDER BY last_exit_at'),
+            'worker_incidents': records('SELECT * FROM banknifty_worker_incidents ORDER BY observed_at'),
+            'tracked_contracts': records('SELECT * FROM banknifty_tracked_contracts ORDER BY trading_date,first_seen_at'),
+            'broker_cost_evidence': records('SELECT * FROM banknifty_broker_cost_evidence ORDER BY imported_at'),
             'coverage': records("SELECT trading_date,scan_state,count(*),min(observed_at),max(observed_at) "
                                 "FROM banknifty_market_history GROUP BY 1,2 ORDER BY 1,2")}
     body = json.dumps(bundle, default=str, sort_keys=True).encode()
