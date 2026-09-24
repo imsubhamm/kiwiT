@@ -988,7 +988,7 @@ class BankNiftyService:
                     (current["day"],),
                 ).fetchone()
                 retry_due = bool(previous and previous[1] in {"failed", "interrupted"}
-                                 and now >= previous[2] + timedelta(minutes=5))
+                                 and now >= previous[2] + timedelta(minutes=2))
                 trigger["new"] = bool(trigger["call"] and
                                       (not previous or previous[0] != trigger["key"] or retry_due))
                 if not selection["plans"] and not current["position"]:
