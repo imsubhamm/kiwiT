@@ -32,8 +32,11 @@ desk disabled. The deployment script installs the independent timer. The legacy
 cash Run endpoint is blocked when this feature is enabled; old cash exits/history
 are preserved. Existing portfolio/research cards remain explicitly separate.
 
-AI calls are at most once per two-minute UTC slot, after five contiguous completed
-one-minute index candles. Forming candles are excluded; latest close must be no
+AI calls are event-driven and retain the two-minute slot as a concurrency backstop.
+Stable eligible plans do not cause repeated paid calls; a changed plan set, price/chase
+band, or near-stop/near-target position band creates a new decision event. Cooldown,
+entry-count, session-loss, one-position and quantity gates run before reservation.
+Calls begin only after five contiguous completed one-minute index candles. Forming candles are excluded; latest close must be no
 older than 180 seconds, and option quotes no older than 90 seconds. Independent position supervision runs each minute and before
 AI calls. Model failure, insufficient budget, bad output or stale data never
 falls back to a forced/rules-only entry. Disabling AI still allows risk exits.
@@ -54,14 +57,17 @@ input snapshots are in `banknifty_ai_calls`; session/fills in `banknifty_events`
 
 ## Versioned automatic playbooks
 
-The selector now supplies explicit versioned entry plans for opening-range breakout,
-breakout/retest, trend pullback and range reversal. The AI chooses a supplied plan
+Selector v4 supplies explicit versioned entry plans for opening-range breakout,
+breakout/retest, trend pullback, range reversal, previous-day breakout, engulfing,
+hammer and shooting-star reversal. The AI chooses a supplied plan
 or waits; execution independently rechecks the current underlying and option prices.
 New positions also carry underlying invalidation exits. The dashboard
 shows eligibility reasons, plans, rejected decisions and partial-fill-aware paper
 results per playbook. See [BANKNIFTY_PLAYBOOKS.md](BANKNIFTY_PLAYBOOKS.md) for the
 exact routing/entry rules and remaining historical-options validation requirements.
-No eligible plan while flat means no paid AI call. Existing exits still run.
+No eligible plan while flat means no paid AI call. AI EXIT is advisory evidence;
+deterministic premium stop/target, underlying invalidation, session and end-of-day
+rules retain exit authority.
 
 ## Risk and limitations
 
@@ -72,22 +78,39 @@ No eligible plan while flat means no paid AI call. Existing exits still run.
   Delivery uses a durable claim lease and retries after 15 minutes; SMTP is at-least-once. If a fresh executable
   quote was unavailable, the report explicitly marks the position unresolved instead
   of inventing a closing fill.
-- Max 10 entries, 50% premium allocation, 2% initial capital at planned stop.
+- Max 10 entries, 25% premium allocation, 1% initial capital at planned stop.
 - User percentages apply to session net P&L and individual premium stops/targets.
-- Ask-side buys, bid-side sells, 10bps adverse slippage rounded to tick, illustrative
-  20bps + ₹20 per fill fees. These are NOT exact options brokerage/tax calculations.
+- Ask-side buys and bid-side sells retain 10bps adverse slippage rounded to tick.
+  Costs use the versioned `groww-nse-equity-options-2026-04-01` schedule: ₹20 per
+  executed order plus exchange, IPFT, SEBI, GST, stamp-duty and sell-side STT
+  components. Contract notes remain authoritative; import their actual costs with
+  `python scripts/import_broker_costs.py costs.csv`.
 - Displayed depth limits quantity; partial exits persist. No stale or invented fills.
 - Five-minute cooldown after exits, immutable daily limits, durable stop/restart state.
+- The entry cap, cooldown and session P&L limit block execution but keep minute-by-minute
+  selector scans in shadow mode until the entry window closes.
+- Every eligible contract is retained for at least 20 minutes; opened-position contracts
+  are retained through the session. Provider IV, Greeks, volume and OI fields are stored
+  when present, and missing coverage is explicit. No IV or Greek is invented.
+- Set `KIWIT_OPTIONS_EVENT_CALENDAR` to a point-in-time JSON file matching
+  `config/options-event-calendar.example.json`. Verified high-impact events within two
+  hours block entries. The file requires an owner, source reference and timezone-aware
+  `as_of`; after 30 days it becomes invalid. Unconfigured or invalid coverage is reported as unknown.
 - Regular-session holidays use the versioned 2026 NSE F&O calendar; unknown years block entries.
   Groww's index quote was verified to lack a trade timestamp. Instead, the adapter
   uses its documented `/v1/historical/candles` endpoint and completed candle close
   times, never receipt time. During-market freshness still needs a forward check.
-- No options backtest, profitability claim, realistic queue simulation or live readiness.
+- Offline evaluation reports the 4/6/10 entry-cap × 2%/3%/5% loss matrix and
+  playbook-specific holding horizons on the same retained quote tape. These are
+  overlapping opportunity studies, not portfolio returns or profitability claims.
+- No profitability claim, realistic queue simulation or live readiness.
 - Closed-market residual positions require attention; never fabricate an EOD close.
 - Existing cash portfolio cards do not include this isolated options ledger.
 
 Sources: https://groww.in/trade-api/docs/curl/instruments and
 https://groww.in/trade-api/docs/curl/live-data ;
+https://groww.in/pricing/futures-and-options ;
+https://www.nseindia.com/static/products-services/equity-derivatives-securities-transaction-tax ;
 https://developers.openai.com/api/docs/guides/structured-outputs ;
 https://developers.openai.com/api/docs/models/gpt-5.6-terra
 

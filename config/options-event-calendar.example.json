@@ -1,0 +1,13 @@
+{
+  "version": "event-calendar-v1",
+  "as_of": "replace-with-source-retrieval-timestamp",
+  "owner": "replace-with-maintainer",
+  "source_reference": "replace-with-RBI-or-exchange-source-URL",
+  "events": [
+    {
+      "at": "2026-01-01T10:00:00+05:30",
+      "name": "Replace with a verified RBI, exchange or macro event",
+      "impact": "high"
+    }
+  ]
+}

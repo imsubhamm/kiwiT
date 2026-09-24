@@ -582,7 +582,7 @@ def test_playbook_exits_without_ai_and_keeps_plan_attribution(desk):
     reason = "underlying_invalidation"
     service, market, analyst, clock = desk
     state = warm(desk)
-    assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v3"
+    assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v4"
     analyst.fail = True
     clock[0] += timedelta(minutes=1)
     market.latest_underlying = lambda now: {"at": now.isoformat(), "spot": "54900"}
@@ -685,6 +685,36 @@ def test_elapsed_holding_deadline_does_not_force_exit(desk):
     status = service.status()
     assert status["session"]["position"]["id"] == state["position"]["id"]
     assert not any(e["kind"] == "paper_exit" for e in status["events"])
+
+
+def test_entry_cap_keeps_shadow_scans_without_paid_ai(desk):
+    service, _market, analyst, clock = desk
+    service.start(100000, 5, 10, "test")
+    with service.store.locked() as connection:
+        state = service.store.latest(connection)
+        state["entries"] = 10
+        service.store.save(connection, state)
+    for minute in range(5):
+        clock[0] = NOW + timedelta(minutes=minute)
+        result = service.run_once()
+    status = service.status()
+    assert result["state"] == "shadow_scan" and "DAILY_ENTRY_CAP" in result["reason_codes"]
+    assert status["session"]["state"] == "running" and analyst.calls == 0
+    assert any(event["kind"] == "strategy_scan" and event["detail"]["mode"] == "shadow"
+               for event in status["events"])
+
+
+def test_ai_exit_is_advisory_and_does_not_close_position(desk):
+    service, market, analyst, clock = desk
+    position = warm(desk)["position"]
+    analyst.action = "EXIT"
+    market.bid = "97"
+    clock[0] += timedelta(minutes=2)
+    service.run_once()
+    status = service.status()
+    assert status["session"]["position"]["id"] == position["id"]
+    advisory = next(event for event in status["events"] if event["kind"] == "ai_exit_advisory")
+    assert advisory["detail"]["execution_authority"] is False
 
 
 def test_optional_session_profit_cap_keeps_loss_protection():

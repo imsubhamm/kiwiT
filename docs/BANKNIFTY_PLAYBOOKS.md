@@ -1,8 +1,7 @@
-# Bank Nifty paper selector v3
+# Bank Nifty paper selector v4
 
-Implementation: `banknifty-selector-v3-broader`. All eight playbooks are **unvalidated
-paper experiments**. This version broadens eligibility and starts a new strategy
-evidence series.
+Implementation: `banknifty-selector-v4-evidence`. All eight playbooks are **unvalidated
+paper experiments**. This version tightens entry quality and starts a new strategy evidence series.
 This is not promotion of the rejected cash router or permission for broker orders.
 No new strategy is invented or automatically promoted each morning.
 
@@ -10,14 +9,14 @@ No new strategy is invented or automatically promoted each morning.
 
 | Versioned playbook | Existing completed 5m setup | Required regime support | Maximum hold |
 | --- | --- | --- | --- |
-| opening_range_breakout_v3 | First 15m range breakout | 5m **or** 15m matches direction | No fixed deadline |
-| breakout_retest_v3 | Prior 20-bar breakout and retest | 5m **or** 15m matches direction | No fixed deadline |
-| trend_pullback_v3 | EMA9 pullback and directional close | 5m **or** 15m matches direction | No fixed deadline |
-| range_reversal_v3 | Rejection back inside the prior 20-bar range | 5m **or** 15m range | No fixed deadline |
-| previous_day_breakout_v3 | Previous-day high/low breakout | 5m **or** 15m matches direction | No fixed deadline |
-| engulfing_reversal_v3 | Two-candle engulfing reversal | Current chart evidence only | No fixed deadline |
-| hammer_reversal_v3 | Hammer rejection | 5m **or** 15m range | No fixed deadline |
-| shooting_star_reversal_v3 | Shooting-star rejection | 5m **or** 15m range | No fixed deadline |
+| opening_range_breakout_v4 | First 15m range breakout | 5m **or** 15m matches direction | No fixed deadline |
+| breakout_retest_v4 | Prior 20-bar breakout and retest | 5m **or** 15m matches direction | No fixed deadline |
+| trend_pullback_v4 | EMA9 pullback and directional close | 5m **or** 15m matches direction | No fixed deadline |
+| range_reversal_v4 | Rejection back inside the prior 20-bar range | 5m and 15m range or direction-supportive | No fixed deadline |
+| previous_day_breakout_v4 | Previous-day high/low breakout | 5m **or** 15m matches direction | No fixed deadline |
+| engulfing_reversal_v4 | Two-candle engulfing reversal | 5m and 15m range or direction-supportive | No fixed deadline |
+| hammer_reversal_v4 | Hammer rejection | 5m and 15m range or direction-supportive | No fixed deadline |
+| shooting_star_reversal_v4 | Shooting-star rejection | 5m and 15m range or direction-supportive | No fixed deadline |
 
 See CHART_ANALYSIS.md for exact setup formulas. The weekly context must cover all expected regular sessions in the versioned NSE calendar;
 its directional bias is recorded context, not an entry veto. Missing/stale evidence,
@@ -38,15 +37,17 @@ contract. The AI selects among these bounded plans or HOLD, not arbitrary contra
 Each plan records a content-hashed ID, selector/playbook versions, source setup and
 timestamp, contract, quantity, trigger, invalidation, maximum chase price, premium
 cap, indicative stop/target, holding limit and expiry. Trigger is the setup's
-observed close; permitted price is from trigger to 0.5 five-minute ATR beyond it
-in the entry direction. Invalidation must be strictly on the opposite side.
+observed close; permitted price is from trigger to 0.25 five-minute ATR beyond it
+in the entry direction. Invalidation must be strictly on the opposite side. Bullish
+entries are blocked at RSI14 >=75 and bearish entries at RSI14 <=25 when those fields
+are available. Verified high-impact event windows also block plans.
 
 Expiry is the earliest of creation +120 seconds, setup +300 seconds and analysis
 +180 seconds. Premium cap allows at most 0.5% ask movement, then the existing adverse
 slippage/tick rounding. Quantity is sized at that cap and never increased at fill.
-Sizing allows max50% premium allocation and max2% initial-capital planned risk,
+Sizing allows max25% premium allocation and max1% initial-capital planned risk,
 and now also respects the remaining daily loss budget after realized P&L.
-Illustrative fees, slippage and stop gaps mean these are not guaranteed loss caps.
+Versioned broker/statutory costs, slippage and stop gaps mean these are not guaranteed loss caps.
 
 Before filling, fetch completed underlying candles again and a fresh option quote.
 Reject an unknown/mismatched/tampered/expired plan, older underlying evidence,
@@ -63,12 +64,14 @@ indicative premium. AI does not set size, prices or risk limits.
 The existing model and endpoint are unchanged. AI spending is capped at $5 per IST
 day and $50 over the trailing 30 IST calendar days. The strict structured output
 adds a required `plan_id`: BUY must reference a supplied plan and its symbol/strategy.
-HOLD uses empty symbol/plan ID and `no_trade`; EXIT references the held symbol with
+HOLD uses empty symbol/plan ID and `no_trade`; advisory EXIT references the held symbol with
 empty plan ID and `no_trade`. Instructions request a concise choice explanation,
 not hidden reasoning or invented win probabilities. Flat with no eligible plan
-means no paid AI call; an open position still permits AI HOLD/EXIT decisions.
+means no paid AI call. Stable opportunities do not poll the model again. An open
+position creates an AI event only when it enters a near-stop or near-target band.
 
-Independent premium stops, session limits and EOD exits remain. New positions also
+Independent premium stops, session limits and EOD exits remain the only execution
+authority. AI EXIT records an advisory event and never closes the position. New positions also
 exit on a fresh post-entry completed underlying candle crossing plan invalidation,
 with no fixed holding deadline. Underlying-feed failure does not disable premium/time
 exits; executable option quotes are still required. Monitoring is minute-based,
@@ -92,6 +95,9 @@ Old events without attribution are not silently assigned to a playbook. The revi
 is not mark-to-market drawdown, a historical backtest or promotion approval.
 UI displays expiry/staleness and uses text-only rendering for external/model strings.
 The user's action remains capital + limits + Run; no per-trade buttons are added.
+Eligible contracts are retained for fixed-horizon evaluation, including after they
+leave the nearest-five-strike selection universe. Entry-cap, cooldown and session-loss
+blocks keep selector scans in explicit shadow mode.
 
 ## What is and is not validated
 

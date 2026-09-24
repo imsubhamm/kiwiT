@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from .brokers.groww import BrokerApiError
 from .chart_analysis import VERSION, analyse, history_context, parse_minutes
 from .intraday import IST, _quote_time
 
@@ -75,6 +76,21 @@ def executable_quote(payload: dict, now: datetime, *, entry: bool = True) -> dic
         if ask < bid or (ask - bid) / ask > Decimal(".02") or ask_size <= 0:
             raise ValueError("Crossed, illiquid or wide-spread quote")
         quote.update(ask=str(ask), ask_size=ask_size)
+    aliases = {
+        "open_interest": ("open_interest", "oi"),
+        "volume": ("volume", "total_traded_quantity"),
+        "implied_volatility": ("implied_volatility", "iv"),
+        "delta": ("delta",), "gamma": ("gamma",), "theta": ("theta",), "vega": ("vega",),
+    }
+    fields = {}
+    for name, keys in aliases.items():
+        value = next((payload.get(key) for key in keys if payload.get(key) is not None), None)
+        if value is None:
+            continue
+        number = Decimal(str(value))
+        if number.is_finite() and (name not in {"open_interest", "volume"} or number >= 0):
+            fields[name] = str(number)
+    quote["market_fields"] = fields
     return quote
 
 
@@ -128,7 +144,7 @@ class BankNiftyMarket:
             raise ValueError("Underlying recheck candles missing or stale")
         return {"at": bars[-1]["at"], "spot": str(bars[-1]["close"])}
 
-    def snapshot(self, now, cached_context=None):
+    def snapshot(self, now, cached_context=None, tracked_symbols=()):
         local = now.astimezone(IST)
         start = local.replace(hour=9, minute=15, second=0, microsecond=0)
         current = parse_minutes(self.broker.banknifty_candles(start, now), now)
@@ -155,14 +171,25 @@ class BankNiftyMarket:
         contracts = self.contracts(now.astimezone(IST).date())
         strikes = sorted({Decimal(c["strike"]) for c in contracts}, key=lambda strike: abs(strike - spot))[:5]
         candidates = []
+        quote_failures = {"validation": 0, "transport": 0, "provider": 0}
+        eligible_symbols = {c["symbol"] for c in contracts if Decimal(c["strike"]) in strikes}
+        tracked = set(tracked_symbols or ())
         for contract in contracts:
-            if Decimal(contract["strike"]) in strikes:
+            if contract["symbol"] in eligible_symbols | tracked:
                 try:
                     quote = self.quote(contract["symbol"], now)
                     if min(quote["bid_size"], quote["ask_size"]) >= contract["lot"]:
-                        candidates.append(dict(contract, quote=quote))
+                        candidates.append(dict(contract, quote=quote,
+                                               selection_eligible=contract["symbol"] in eligible_symbols,
+                                               tracked=contract["symbol"] in tracked))
                 except (ValueError, ArithmeticError):
-                    continue
+                    quote_failures["validation"] += 1
+                except OSError:
+                    quote_failures["transport"] += 1
+                except BrokerApiError:
+                    quote_failures["provider"] += 1
+        optional = ("open_interest", "volume", "implied_volatility", "delta", "gamma", "theta", "vega")
+        covered = {field: sum(field in c["quote"].get("market_fields", {}) for c in candidates) for field in optional}
         return {
             "at": now.isoformat(),
             "spot": str(spot),
@@ -172,6 +199,13 @@ class BankNiftyMarket:
             "underlying_source": "Groww completed 1-minute index candles",
             "chart_analysis": analysis,
             "chart_cache": context,
+            "option_feature_coverage": {
+                "contracts": len(candidates),
+                "available_contracts_by_field": covered,
+                "premium_history": "retained_contract_tape",
+                "volatility_surface": "available" if covered["implied_volatility"] >= 3 else "insufficient_provider_fields",
+                "quote_failures": quote_failures,
+            },
         }
 
 

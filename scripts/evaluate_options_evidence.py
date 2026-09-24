@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 
-from kiwit.options_evaluation import compare, session_acceptance
+from kiwit.options_evaluation import compare, cost_reconciliation, exit_matrix, rule_matrix, session_acceptance
 
 
 def main():
@@ -16,6 +16,9 @@ def main():
     args = parser.parse_args()
     bundle = json.loads(args.bundle.read_text())
     result = compare(bundle, horizon_minutes=args.horizon_minutes, extra_bps=args.extra_cost_bps)
+    result['rule_matrix'] = rule_matrix(bundle, horizon_minutes=args.horizon_minutes)
+    result['exit_matrix'] = exit_matrix(bundle)
+    result['cost_reconciliation'] = cost_reconciliation(bundle)
     if bool(args.day) != bool(args.release):
         parser.error('--day and --release must be supplied together')
     if args.day:
