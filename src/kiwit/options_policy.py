@@ -13,7 +13,7 @@ ENTRY_CAP = 10
 COOLDOWN_SECONDS = 300
 
 
-def entry_gate(state: dict, now: datetime, plans: list[dict]) -> dict:
+def entry_gate(state: dict, now: datetime, plans: list[dict], event_context: dict | None = None) -> dict:
     """Return machine-readable entry authority before any paid model call."""
     reasons = []
     if state.get("position"):
@@ -30,6 +30,12 @@ def entry_gate(state: dict, now: datetime, plans: list[dict]) -> dict:
             reasons.append("POST_EXIT_COOLDOWN")
     if not plans and not state.get("position"):
         reasons.append("NO_ELIGIBLE_PLAN")
+    events = event_context or {}
+    if event_context is not None and not state.get("position"):
+        if events.get("coverage") != "configured":
+            reasons.append("EVENT_CALENDAR_UNAVAILABLE")
+        elif events.get("risk") != "clear":
+            reasons.append("HIGH_IMPACT_EVENT_WINDOW")
     return {
         "allowed": not reasons,
         "reason_codes": reasons,

@@ -64,6 +64,54 @@ def fill_price(quote, contract, buy):
     return (value / tick).to_integral_value(rounding=ROUND_CEILING if buy else ROUND_FLOOR) * tick
 
 
+def exit_levels(state, profile, fill, quantity, contract):
+    """Return immutable cost-aware levels for one experimental playbook."""
+    price, units, tick = D(fill), D(quantity), D(contract["tick"])
+    stop_pct = min(trade_limits(state)[0], D(str(profile["stop_pct"])))
+    target_pct = min(trade_limits(state)[1], D(str(profile["target_pct"])))
+    reward_r = D(str(profile["reward_r"]))
+    hold = int(profile["max_hold_minutes"])
+    if not (price > 0 and units > 0 and tick > 0 and D(0) < stop_pct < D(100)
+            and target_pct > 0 and reward_r >= 1 and 1 <= hold <= 120):
+        raise ValueError("Invalid playbook exit profile")
+
+    stop = ((price * (1 - stop_pct / 100)) / tick).to_integral_value(rounding=ROUND_FLOOR) * tick
+    entry_total = price * units + fees(price * units, "buy")
+    stop_proceeds = stop * units - fees(stop * units, "sell")
+    net_risk = entry_total - stop_proceeds
+    if net_risk <= 0:
+        raise ValueError("Playbook stop does not define positive net risk")
+
+    target_floor = ((price * (1 + target_pct / 100)) / tick).to_integral_value(rounding=ROUND_CEILING) * tick
+    desired_net_reward = net_risk * reward_r
+    required_proceeds = entry_total + desired_net_reward
+    required_target = required_proceeds + FIXED_ORDER_COST
+    required_target /= units * (1 - SELL_VARIABLE_RATE)
+    target = max(target_floor,
+                 (required_target / tick).to_integral_value(rounding=ROUND_CEILING) * tick)
+    for _ in range(3):
+        target_proceeds = target * units - fees(target * units, "sell")
+        net_reward = target_proceeds - entry_total
+        if net_reward >= desired_net_reward and net_reward > 0:
+            round_trip_cost = fees(price * units, "buy") + fees(target * units, "sell")
+            gross_reward = (target - price) * units
+            cost_share = round_trip_cost / gross_reward
+            maximum_cost_share = D(str(profile["max_cost_share"]))
+            if cost_share > maximum_cost_share:
+                raise ValueError("Estimated costs consume too much of the planned gross reward")
+            return {
+                "version": str(profile["version"]), "stop": stop, "target": target,
+                "stop_pct": stop_pct, "target_floor_pct": target_pct, "reward_r": reward_r,
+                "max_hold_minutes": hold,
+                "estimated_round_trip_cost": round_trip_cost, "cost_share_of_gross_reward": cost_share,
+                "maximum_cost_share": maximum_cost_share,
+                "net_risk": net_risk, "net_reward_at_target": net_reward,
+                "net_reward_r": net_reward / net_risk,
+            }
+        target += tick
+    raise ValueError("Cost-aware target exceeds bounded search")
+
+
 def quantity_for(state, contract, quote):
     fill = fill_price(quote, contract, True)
     amount, cash, loss = D(state["amount"]), D(state["cash"]), D(state["loss_pct"]) / 100

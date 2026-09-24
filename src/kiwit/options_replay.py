@@ -6,7 +6,7 @@ Held-out performance requires a complete executable option tape and remains dist
 from datetime import datetime
 from decimal import Decimal as D
 
-from .options_risk import fees, fill_price, trade_limits
+from .options_risk import exit_levels, fees, fill_price
 from .playbooks import VERSION, fingerprint, select_plans, validate_plan
 
 
@@ -34,11 +34,11 @@ def replay_fills(bundle):
                                      position['entry_underlying'], datetime.fromisoformat(position['entered_at']))
                 price = fill_price(detail['quote'], contract, True)
                 cost = price * plan['quantity'] + fees(price * plan['quantity'], 'buy')
+                exits = exit_levels(state, plan['live_exit'], price, plan['quantity'], contract)
                 checks = (plan == position['entry_plan'], position['quantity'] == plan['quantity'],
                           position['contract'] == {k: v for k, v in contract.items() if k != 'quote'},
                           D(position['entry']) == price, D(position['entry_cost_remaining']) == cost,
-                          D(position['stop']) == price * (1 - trade_limits(state)[0] / 100),
-                          D(position['target']) == price * (1 + trade_limits(state)[1] / 100))
+                          D(position['stop']) == exits['stop'], D(position['target']) == exits['target'])
                 if not all(checks):
                     status = 'mismatch'
                 else:

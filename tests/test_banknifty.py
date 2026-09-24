@@ -30,6 +30,14 @@ def quote(now=NOW, bid="100", ask="101", size=600):
     return {"stamp": now.isoformat(), "bid": bid, "ask": ask, "bid_size": size, "ask_size": size}
 
 
+@pytest.fixture(autouse=True)
+def configured_event_calendar(tmp_path, monkeypatch):
+    path = tmp_path / "events.json"
+    path.write_text(json.dumps({"version": "test", "as_of": NOW.isoformat(), "owner": "test",
+                                "source_reference": "https://example.invalid/test", "events": []}))
+    monkeypatch.setenv("KIWIT_OPTIONS_EVENT_CALENDAR", str(path))
+
+
 def test_quotes_require_timestamp_and_executable_depth():
     payload = {
         "bid_price": 100,
@@ -404,9 +412,13 @@ class Mailer:
 
 
 @pytest.fixture
-def desk(db, monkeypatch):
+def desk(db, monkeypatch, tmp_path):
     monkeypatch.setenv("KIWIT_BANKNIFTY_AI_ENABLED", "true")
     monkeypatch.setenv("OPENAI_API_KEY", "test-not-a-real-key")
+    calendar = tmp_path / "desk-events.json"
+    calendar.write_text(json.dumps({"version": "test", "as_of": NOW.isoformat(), "owner": "test",
+                                    "source_reference": "https://example.invalid/test", "events": []}))
+    monkeypatch.setenv("KIWIT_OPTIONS_EVENT_CALENDAR", str(calendar))
     market, analyst, clock = Market(), Analyst(), [NOW]
     service = BankNiftyService(db, None, market=market, analyst=analyst, clock=lambda: clock[0])
     return service, market, analyst, clock
@@ -582,7 +594,7 @@ def test_playbook_exits_without_ai_and_keeps_plan_attribution(desk):
     reason = "underlying_invalidation"
     service, market, analyst, clock = desk
     state = warm(desk)
-    assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v4"
+    assert state["position"]["entry_plan"]["playbook_id"] == "opening_range_breakout_v5"
     analyst.fail = True
     clock[0] += timedelta(minutes=1)
     market.latest_underlying = lambda now: {"at": now.isoformat(), "spot": "54900"}
@@ -672,9 +684,9 @@ def test_completed_day_becomes_bounded_next_day_learning_context(desk):
     assert learning["playbook_evidence"][0]["promotion_eligible"] is False
 
 
-def test_elapsed_holding_deadline_does_not_force_exit(desk):
+def test_elapsed_playbook_holding_deadline_forces_deterministic_exit(desk):
     service, _market, analyst, clock = desk
-    state = warm(desk)
+    warm(desk)
     analyst.fail = True
     with service.store.locked() as connection:
         current = service.store.latest(connection)
@@ -683,8 +695,9 @@ def test_elapsed_holding_deadline_does_not_force_exit(desk):
     clock[0] += timedelta(minutes=46)
     service._monitor()
     status = service.status()
-    assert status["session"]["position"]["id"] == state["position"]["id"]
-    assert not any(e["kind"] == "paper_exit" for e in status["events"])
+    assert status["session"]["position"] is None
+    event = next(e for e in status["events"] if e["kind"] == "paper_exit")
+    assert event["detail"]["reason"] == "playbook_time_exit"
 
 
 def test_entry_cap_keeps_shadow_scans_without_paid_ai(desk):
@@ -708,7 +721,7 @@ def test_ai_exit_is_advisory_and_does_not_close_position(desk):
     service, market, analyst, clock = desk
     position = warm(desk)["position"]
     analyst.action = "EXIT"
-    market.bid = "97"
+    market.bid = "98"
     clock[0] += timedelta(minutes=2)
     service.run_once()
     status = service.status()

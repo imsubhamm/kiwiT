@@ -53,8 +53,9 @@ Give a concise decision summary, not hidden reasoning. Code controls all sizing,
 stop/target and risk limits. These are unvalidated experiments, not approved strategies.
 Plan decision_context fields are deterministic and authoritative. Do not recalculate
 timestamps, arithmetic, spread, freshness, headroom, invalidation distance, cooldown,
-entry count or quantity feasibility. Select a plan only when plan_valid_now is true
-and entry_gate.allowed is true."""
+entry count, quantity feasibility, fee drag or exit levels. Each plan's live_exit and
+cost_aware_exit fields are immutable deterministic controls. Select a plan only when
+plan_valid_now is true and entry_gate.allowed is true."""
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -97,7 +98,7 @@ def compact_decision_snapshot(snapshot):
         {key: plan[key] for key in (
             "id", "playbook_id", "strategy", "symbol", "kind", "quantity",
             "planned_fill", "max_fill", "expires_at", "pattern_id", "decision_context",
-            "exit_policy", "exit_experiments",
+            "exit_policy", "live_exit", "cost_aware_exit", "exit_experiments",
         ) if key in plan}
         for plan in selection.get("plans") or []
     ]
@@ -296,11 +297,11 @@ def failure_evidence(error):
 
 def provenance():
     return {
-        "provider": PROVIDER, "model": MODEL, "prompt_version": "banknifty-prompt-v2",
+        "provider": PROVIDER, "model": MODEL, "prompt_version": "banknifty-prompt-v3",
         "prompt_sha256": hashlib.sha256(PROMPT.encode()).hexdigest(),
         "schema_sha256": hashlib.sha256(json.dumps(SCHEMA, sort_keys=True).encode()).hexdigest(),
         "release": os.getenv("KIWIT_RELEASE_SHA", "development"),
-        "exit_policy": "risk_and_session_only_v2", "sizing_version": "options-sizing-v3",
+        "exit_policy": "playbook_cost_aware_v5", "sizing_version": "options-sizing-v3",
     }
 
 

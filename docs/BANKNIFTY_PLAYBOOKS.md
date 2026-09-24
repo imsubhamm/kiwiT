@@ -1,7 +1,7 @@
-# Bank Nifty paper selector v4
+# Bank Nifty paper selector v5
 
-Implementation: `banknifty-selector-v4-evidence`. All eight playbooks are **unvalidated
-paper experiments**. This version tightens entry quality and starts a new strategy evidence series.
+Implementation: `banknifty-selector-v5-cost-aware`. All eight playbooks are **unvalidated
+paper experiments**. This version starts a new evidence series because its live exit behavior differs from selector v4.
 This is not promotion of the rejected cash router or permission for broker orders.
 No new strategy is invented or automatically promoted each morning.
 
@@ -9,14 +9,14 @@ No new strategy is invented or automatically promoted each morning.
 
 | Versioned playbook | Existing completed 5m setup | Required regime support | Maximum hold |
 | --- | --- | --- | --- |
-| opening_range_breakout_v4 | First 15m range breakout | 5m **or** 15m matches direction | No fixed deadline |
-| breakout_retest_v4 | Prior 20-bar breakout and retest | 5m **or** 15m matches direction | No fixed deadline |
-| trend_pullback_v4 | EMA9 pullback and directional close | 5m **or** 15m matches direction | No fixed deadline |
-| range_reversal_v4 | Rejection back inside the prior 20-bar range | 5m and 15m range or direction-supportive | No fixed deadline |
-| previous_day_breakout_v4 | Previous-day high/low breakout | 5m **or** 15m matches direction | No fixed deadline |
-| engulfing_reversal_v4 | Two-candle engulfing reversal | 5m and 15m range or direction-supportive | No fixed deadline |
-| hammer_reversal_v4 | Hammer rejection | 5m and 15m range or direction-supportive | No fixed deadline |
-| shooting_star_reversal_v4 | Shooting-star rejection | 5m and 15m range or direction-supportive | No fixed deadline |
+| opening_range_breakout_v5 | First 15m range breakout | 5m **or** 15m matches direction | 30 minutes |
+| breakout_retest_v5 | Prior 20-bar breakout and retest | 5m **or** 15m matches direction | 45 minutes |
+| trend_pullback_v5 | EMA9 pullback and directional close | 5m **or** 15m matches direction | 30 minutes |
+| range_reversal_v5 | Rejection back inside the prior 20-bar range | 5m and 15m range or direction-supportive | 20 minutes |
+| previous_day_breakout_v5 | Previous-day high/low breakout | 5m **or** 15m matches direction | 45 minutes |
+| engulfing_reversal_v5 | Two-candle engulfing reversal | 5m and 15m range or direction-supportive | 20 minutes |
+| hammer_reversal_v5 | Hammer rejection | 5m and 15m range or direction-supportive | 20 minutes |
+| shooting_star_reversal_v5 | Shooting-star rejection | 5m and 15m range or direction-supportive | 20 minutes |
 
 See CHART_ANALYSIS.md for exact setup formulas. The weekly context must cover all expected regular sessions in the versioned NSE calendar;
 its directional bias is recorded context, not an entry veto. Missing/stale evidence,
@@ -40,7 +40,7 @@ cap, indicative stop/target, holding limit and expiry. Trigger is the setup's
 observed close; permitted price is from trigger to 0.25 five-minute ATR beyond it
 in the entry direction. Invalidation must be strictly on the opposite side. Bullish
 entries are blocked at RSI14 >=75 and bearish entries at RSI14 <=25 when those fields
-are available. Verified high-impact event windows also block plans.
+are available. Event coverage must be configured, current and explicitly clear. Missing, invalid or high-impact coverage fails closed before any paid AI call.
 
 Expiry is the earliest of creation +120 seconds, setup +300 seconds and analysis
 +180 seconds. Premium cap allows at most 0.5% ask movement, then the existing adverse
@@ -57,7 +57,10 @@ one-position and once-per-call checks remain. Rejections are linked to their AI 
 and stored as `rejected` with a validation error rather than left `completed`.
 
 Stops/targets are calculated from the **actual simulated fill**, not the earlier
-indicative premium. AI does not set size, prices or risk limits.
+indicative premium. Each playbook has a versioned stop, target floor, net reward
+multiple and maximum holding time. The target includes estimated entry and exit costs;
+plans are rejected when costs exceed 35% of planned gross reward. AI does not set size,
+prices or risk limits. These parameters are hypotheses requiring forward comparison.
 
 ## Model and independent exits
 
@@ -70,10 +73,9 @@ not hidden reasoning or invented win probabilities. Flat with no eligible plan
 means no paid AI call. Stable opportunities do not poll the model again. An open
 position creates an AI event only when it enters a near-stop or near-target band.
 
-Independent premium stops, session limits and EOD exits remain the only execution
+Independent premium stops, playbook time exits, session limits and EOD exits remain the execution
 authority. AI EXIT records an advisory event and never closes the position. New positions also
-exit on a fresh post-entry completed underlying candle crossing plan invalidation,
-with no fixed holding deadline. Underlying-feed failure does not disable premium/time
+exit on a fresh post-entry completed underlying candle crossing plan invalidation. Underlying-feed failure does not disable premium/time
 exits; executable option quotes are still required. Monitoring is minute-based,
 not tick-level or guaranteed instantaneous. Broker mutation methods remain disabled.
 Legacy positions without a plan retain their original exit behavior.
