@@ -35,7 +35,15 @@ from .options_events import event_context
 from .options_market import BankNiftyMarket
 from .options_operations import diagnostics, heartbeat, report_backlog
 from .options_policy import ENTRY_CAP, decision_event, entry_gate
-from .options_risk import BROKER_COST_VERSION, cost_breakdown, fees, fill_price, session_limit_reached, trade_limits
+from .options_risk import (
+    BROKER_COST_VERSION,
+    cost_breakdown,
+    exit_levels,
+    fees,
+    fill_price,
+    session_limit_reached,
+    trade_limits,
+)
 from .paper_session import validate_limits
 from .playbooks import VERSION as SELECTOR_VERSION
 from .playbooks import catalogue, select_plans, underlying_exit, validate_plan
@@ -706,6 +714,8 @@ class BankNiftyService:
                             if price >= D(current["target"])
                             else "underlying_invalidation"
                             if underlying_exit(current, underlying, now)
+                            else "playbook_time_exit"
+                            if current.get("exit_deadline") and now >= datetime.fromisoformat(current["exit_deadline"])
                             else None
                         )
                     )
@@ -799,6 +809,7 @@ class BankNiftyService:
                 plan = validate_plan(decision, snapshot, state, quote, underlying, now)
                 qty = plan["quantity"]
                 fill = fill_price(quote, selected, True)
+                exits = exit_levels(state, plan["live_exit"], fill, qty, selected)
                 cost = fill * qty + fees(fill * qty, "buy")
                 state["cash"] = str(D(state["cash"]) - cost)
                 state["position"] = {
@@ -808,14 +819,17 @@ class BankNiftyService:
                     "entry": str(fill),
                     "entry_cost_per_unit": str(cost / qty),
                     "entry_cost_remaining": str(cost),
-                    "stop": str(fill * (1 - trade_limits(state)[0] / 100)),
-                    "target": str(fill * (1 + trade_limits(state)[1] / 100)),
+                    "stop": str(exits["stop"]),
+                    "target": str(exits["target"]),
                     "entered_at": now.isoformat(),
+                    "exit_deadline": (now + timedelta(minutes=exits["max_hold_minutes"])).isoformat(),
                     "experiment_id": snapshot["experiment_id"],
                     "provenance": snapshot["provenance"],
                     "entry_plan": plan,
                     "entry_underlying": underlying,
-                    "exit_policy": "risk_and_session_only_v2",
+                    "exit_policy": "playbook_cost_aware_v5",
+                    "cost_aware_exit": {key: str(value) if isinstance(value, D) else value
+                                        for key, value in exits.items()},
                     "cost_model": BROKER_COST_VERSION,
                 }
                 state["entries"] += 1
@@ -978,7 +992,7 @@ class BankNiftyService:
                             "market_fields": quote.get("market_fields") or {},
                         })
                 snapshot["premium_history"] = premium_history[-40:]
-                gate = entry_gate(current, now, selection["plans"])
+                gate = entry_gate(current, now, selection["plans"], snapshot["event_context"])
                 snapshot["entry_gate"] = gate
                 trigger = decision_event(snapshot)
                 snapshot["decision_event_key"] = trigger["key"]

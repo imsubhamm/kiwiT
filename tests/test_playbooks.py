@@ -51,7 +51,8 @@ def fixtures(kind="CE", playbook=PLAYBOOKS[0]):
         "timeframes": {"5m": {"regime": regime, "atr14": 100}, "15m": {"regime": regime}},
         "previous_calendar_week": {"coverage": {"status": "complete"}, "trend": "mixed_or_range"},
     }
-    snapshot = {"spot": "55000", "spot_at": NOW.isoformat(), "candidates": [contract], "chart_analysis": analysis}
+    snapshot = {"spot": "55000", "spot_at": NOW.isoformat(), "candidates": [contract], "chart_analysis": analysis,
+                "event_context": {"coverage": "configured", "risk": "clear", "events": []}}
     snapshot["strategy_selection"] = select_plans(snapshot, state, NOW)
     return snapshot, state, quote
 

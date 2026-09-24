@@ -305,6 +305,7 @@ def test_market_fetches_full_context_and_reuses_daily_cache(monkeypatch):
         for name in ("opening_range_breakout", "breakout_retest", "ema_pullback")
     ]
     state = {"day": str(NOW.date()), "amount": "100000", "cash": "100000", "loss_pct": "5", "profit_pct": "10"}
+    ai_snapshot["event_context"] = {"coverage": "configured", "risk": "clear", "events": []}
     ai_snapshot["strategy_selection"] = select_plans(ai_snapshot, state, NOW + timedelta(seconds=2))
     ai_snapshot["learning_context"] = {
         "version": "banknifty-learning-v1",

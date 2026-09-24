@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal as D
 
+import pytest
 from test_playbooks import NOW, fixtures
 
 from kiwit.options_ai import compact_decision_snapshot
@@ -10,8 +11,8 @@ from kiwit.options_evaluation import cost_reconciliation, exit_matrix, rule_matr
 from kiwit.options_events import event_context
 from kiwit.options_market import executable_quote
 from kiwit.options_policy import decision_event, entry_gate
-from kiwit.options_risk import BROKER_COST_VERSION, cost_breakdown, fill_price, quantity_for
-from kiwit.playbooks import select_plans
+from kiwit.options_risk import BROKER_COST_VERSION, cost_breakdown, exit_levels, fill_price, quantity_for
+from kiwit.playbooks import PLAYBOOKS, select_plans
 
 
 def test_sizing_restores_quarter_allocation_and_one_percent_planned_risk():
@@ -95,6 +96,34 @@ def test_verified_event_calendar_blocks_only_configured_high_impact_window(tmp_p
     snapshot, state, _ = fixtures()
     snapshot["event_context"] = context
     assert select_plans(snapshot, state, NOW)["plans"] == []
+
+
+def test_missing_event_calendar_fails_closed_before_ai(monkeypatch):
+    monkeypatch.delenv("KIWIT_OPTIONS_EVENT_CALENDAR", raising=False)
+    context = event_context(NOW)
+    snapshot, state, _ = fixtures()
+    snapshot["event_context"] = context
+    assert select_plans(snapshot, state, NOW)["plans"] == []
+    gate = entry_gate(state, NOW, [], context)
+    assert not gate["allowed"] and "EVENT_CALENDAR_UNAVAILABLE" in gate["reason_codes"]
+
+
+def test_playbook_exit_is_cost_aware_and_not_universal():
+    first, state, _ = fixtures(playbook=PLAYBOOKS[0])
+    reversal, _, _ = fixtures(playbook=PLAYBOOKS[3])
+    a, b = first["strategy_selection"]["plans"][0], reversal["strategy_selection"]["plans"][0]
+    assert a["live_exit"] != b["live_exit"]
+    contract = first["candidates"][0]
+    levels = exit_levels(state, a["live_exit"], D(a["planned_fill"]), a["quantity"], contract)
+    assert levels["net_reward_at_target"] > 0
+    assert levels["net_reward_r"] >= D(a["live_exit"]["reward_r"])
+
+
+def test_cost_dominated_contract_is_rejected():
+    snapshot, state, _ = fixtures()
+    contract = snapshot["candidates"][0]
+    with pytest.raises(ValueError, match="costs consume"):
+        exit_levels(state, PLAYBOOKS[0]["live_exit"], D(5), contract["lot"], contract)
 
 
 def test_rule_exit_and_actual_cost_matrices_use_recorded_evidence():

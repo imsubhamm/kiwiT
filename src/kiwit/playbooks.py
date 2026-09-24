@@ -6,80 +6,96 @@ from datetime import datetime, timedelta
 from decimal import Decimal as D
 
 from .chart_analysis import VERSION as CHART_VERSION
-from .options_risk import fill_price, quantity_for, sizing_diagnostics, trade_limits
+from .options_risk import exit_levels, fill_price, quantity_for, sizing_diagnostics, trade_limits
 
-VERSION = "banknifty-selector-v4-evidence"
+VERSION = "banknifty-selector-v5-cost-aware"
 PLAYBOOKS = (
     {
-        "id": "opening_range_breakout_v4",
+        "id": "opening_range_breakout_v5",
         "name": "Opening-range breakout",
         "pattern": "opening_range_breakout",
         "strategy": "momentum",
         "regime": "trend",
-        "max_hold_minutes": None,
+        "max_hold_minutes": 30,
+        "live_exit": {"version": "orb-cost-aware-v1", "stop_pct": "4", "target_pct": "8",
+                      "reward_r": "1.5", "max_hold_minutes": 30, "max_cost_share": "0.35"},
         "exit_experiments": {"risk_reward": ["1.5R", "2R", "2.5R"], "max_hold_minutes": [15, 30, 45]},
     },
     {
-        "id": "breakout_retest_v4",
+        "id": "breakout_retest_v5",
         "name": "Breakout / retest",
         "pattern": "breakout_retest",
         "strategy": "momentum",
         "regime": "trend",
-        "max_hold_minutes": None,
+        "max_hold_minutes": 45,
+        "live_exit": {"version": "retest-cost-aware-v1", "stop_pct": "4", "target_pct": "8",
+                      "reward_r": "2", "max_hold_minutes": 45, "max_cost_share": "0.35"},
         "exit_experiments": {"risk_reward": ["1.5R", "2R", "2.5R"], "max_hold_minutes": [15, 30, 45]},
     },
     {
-        "id": "trend_pullback_v4",
+        "id": "trend_pullback_v5",
         "name": "Trend pullback",
         "pattern": "ema_pullback",
         "strategy": "momentum",
         "regime": "trend",
-        "max_hold_minutes": None,
+        "max_hold_minutes": 30,
+        "live_exit": {"version": "pullback-cost-aware-v1", "stop_pct": "3.5", "target_pct": "7",
+                      "reward_r": "1.5", "max_hold_minutes": 30, "max_cost_share": "0.35"},
         "exit_experiments": {"risk_reward": ["1.5R", "2R", "2.5R"], "max_hold_minutes": [15, 30, 45]},
     },
     {
-        "id": "range_reversal_v4",
+        "id": "range_reversal_v5",
         "name": "Range reversal",
         "pattern": "range_rejection",
         "strategy": "reversal",
         "regime": "range",
-        "max_hold_minutes": None,
+        "max_hold_minutes": 20,
+        "live_exit": {"version": "range-reversal-cost-aware-v1", "stop_pct": "3", "target_pct": "6",
+                      "reward_r": "1.25", "max_hold_minutes": 20, "max_cost_share": "0.35"},
         "exit_experiments": {"risk_reward": ["1R", "1.5R", "2R"], "max_hold_minutes": [10, 20, 30]},
     },
     {
-        "id": "previous_day_breakout_v4",
+        "id": "previous_day_breakout_v5",
         "name": "Previous-day breakout",
         "pattern": "previous_day_breakout",
         "strategy": "momentum",
         "regime": "trend",
-        "max_hold_minutes": None,
+        "max_hold_minutes": 45,
+        "live_exit": {"version": "previous-day-cost-aware-v1", "stop_pct": "4", "target_pct": "8",
+                      "reward_r": "2", "max_hold_minutes": 45, "max_cost_share": "0.35"},
         "exit_experiments": {"risk_reward": ["1.5R", "2R", "2.5R"], "max_hold_minutes": [15, 30, 45]},
     },
     {
-        "id": "engulfing_reversal_v4",
+        "id": "engulfing_reversal_v5",
         "name": "Engulfing reversal",
         "pattern": "engulfing",
         "strategy": "reversal",
         "regime": "any",
-        "max_hold_minutes": None,
+        "max_hold_minutes": 20,
+        "live_exit": {"version": "engulfing-cost-aware-v1", "stop_pct": "3", "target_pct": "6",
+                      "reward_r": "1.25", "max_hold_minutes": 20, "max_cost_share": "0.35"},
         "exit_experiments": {"risk_reward": ["1R", "1.5R", "2R"], "max_hold_minutes": [10, 20, 30]},
     },
     {
-        "id": "hammer_reversal_v4",
+        "id": "hammer_reversal_v5",
         "name": "Hammer reversal",
         "pattern": "hammer",
         "strategy": "reversal",
         "regime": "range",
-        "max_hold_minutes": None,
+        "max_hold_minutes": 20,
+        "live_exit": {"version": "hammer-cost-aware-v1", "stop_pct": "3", "target_pct": "6",
+                      "reward_r": "1.5", "max_hold_minutes": 20, "max_cost_share": "0.35"},
         "exit_experiments": {"risk_reward": ["1R", "1.5R", "2R"], "max_hold_minutes": [10, 20, 30]},
     },
     {
-        "id": "shooting_star_reversal_v4",
+        "id": "shooting_star_reversal_v5",
         "name": "Shooting-star reversal",
         "pattern": "shooting_star",
         "strategy": "reversal",
         "regime": "range",
-        "max_hold_minutes": None,
+        "max_hold_minutes": 20,
+        "live_exit": {"version": "shooting-star-cost-aware-v1", "stop_pct": "3", "target_pct": "6",
+                      "reward_r": "1.5", "max_hold_minutes": 20, "max_cost_share": "0.35"},
         "exit_experiments": {"risk_reward": ["1R", "1.5R", "2R"], "max_hold_minutes": [10, 20, 30]},
     },
 )
@@ -87,6 +103,10 @@ PLAYBOOKS = (
 
 def catalogue():
     return [dict(p, validation="unvalidated_paper_experiment") for p in PLAYBOOKS]
+
+
+def playbook_by_id(playbook_id):
+    return next((playbook for playbook in PLAYBOOKS if playbook["id"] == playbook_id), None)
 
 
 def age_ok(stamp, now, seconds):
@@ -160,7 +180,10 @@ def select_plans(snapshot, state, now):
         reasons, chosen = [], None
         for pattern in patterns:
             rejected = route_reasons(analysis, pattern, playbook, now)
-            if snapshot.get("event_context", {}).get("risk") == "high":
+            events = snapshot.get("event_context") or {}
+            if events.get("coverage") != "configured":
+                rejected.append("Verified event calendar unavailable; entry fails closed")
+            elif events.get("risk") != "clear":
                 rejected.append("Verified high-impact event window blocks entry")
             if rejected:
                 reasons.extend(rejected)
@@ -202,6 +225,11 @@ def select_plans(snapshot, state, now):
                                    f"estimated initial capital >= INR {size['minimum_initial_capital_estimate']}")
                     continue
                 fill = fill_price(contract["quote"], contract, True)
+                try:
+                    exits = exit_levels(state, playbook["live_exit"], fill, qty, contract)
+                except ValueError as error:
+                    reasons.append(f"{contract['symbol']}: {error}")
+                    continue
                 expires = min(
                     datetime.fromisoformat(pattern["at"]) + timedelta(seconds=300),
                     datetime.fromisoformat(analysis["at"]) + timedelta(seconds=180),
@@ -225,12 +253,15 @@ def select_plans(snapshot, state, now):
                     "max_fill": str(fill_price(capped, contract, True)),
                     "planned_fill": str(fill),
                     "quantity": qty,
-                    "planned_stop": str(fill * (1 - trade_limits(state)[0] / 100)),
-                    "planned_target": str(fill * (1 + trade_limits(state)[1] / 100)),
+                    "planned_stop": str(exits["stop"]),
+                    "planned_target": str(exits["target"]),
                     "loss_pct": str(trade_limits(state)[0]),
                     "profit_pct": str(trade_limits(state)[1]),
-                    "max_hold_minutes": playbook["max_hold_minutes"],
-                    "exit_policy": "deterministic_safety_v3_with_offline_playbook_variants",
+                    "max_hold_minutes": exits["max_hold_minutes"],
+                    "exit_policy": "playbook_cost_aware_v5",
+                    "live_exit": playbook["live_exit"],
+                    "cost_aware_exit": {key: str(value) if isinstance(value, D) else value
+                                        for key, value in exits.items()},
                     "exit_experiments": playbook["exit_experiments"],
                 }
                 spread = (D(contract["quote"]["ask"]) - D(contract["quote"]["bid"])) / D(contract["quote"]["ask"])
@@ -283,6 +314,12 @@ def validate_plan(decision, snapshot, state, quote, underlying, now):
         raise ValueError("Entry plan expired or future-dated")
     if (D(plan["loss_pct"]), D(plan["profit_pct"])) != (trade_limits(state)[0], trade_limits(state)[1]):
         raise ValueError("Entry plan risk limits changed")
+    playbook = playbook_by_id(plan["playbook_id"])
+    if not playbook or plan.get("live_exit") != playbook["live_exit"]:
+        raise ValueError("Entry plan exit profile changed")
+    events = snapshot.get("event_context") or {}
+    if events.get("coverage") != "configured" or events.get("risk") != "clear":
+        raise ValueError("Verified clear event calendar required for entry")
     if not age_ok(underlying.get("at"), now, 180) or datetime.fromisoformat(underlying["at"]) < datetime.fromisoformat(
         snapshot["spot_at"]
     ):
@@ -301,6 +338,9 @@ def validate_plan(decision, snapshot, state, quote, underlying, now):
         raise ValueError("Option spread, freshness or entry price limit failed")
     if plan["quantity"] <= 0 or plan["quantity"] > quantity_for(state, contract, quote):
         raise ValueError("Planned quantity no longer fits cash, risk or liquidity")
+    exits = exit_levels(state, playbook["live_exit"], fill_price(quote, contract, True), plan["quantity"], contract)
+    if exits["net_reward_at_target"] <= 0 or exits["net_reward_r"] < D(str(playbook["live_exit"]["reward_r"])):
+        raise ValueError("Cost-aware target does not provide required net reward")
     return plan
 
 

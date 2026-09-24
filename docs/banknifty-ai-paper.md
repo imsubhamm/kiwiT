@@ -79,11 +79,16 @@ rules retain exit authority.
   quote was unavailable, the report explicitly marks the position unresolved instead
   of inventing a closing fill.
 - Max 10 entries, 25% premium allocation, 1% initial capital at planned stop.
-- User percentages apply to session net P&L and individual premium stops/targets.
+- User percentages apply to session net P&L and cap individual premium risk. Selector
+  v5 assigns a versioned stop, net reward multiple and 20/30/45-minute holding deadline
+  per playbook. The session trade stop remains the maximum permitted premium stop.
 - Ask-side buys and bid-side sells retain 10bps adverse slippage rounded to tick.
   Costs use the versioned `groww-nse-equity-options-2026-04-01` schedule: ₹20 per
   executed order plus exchange, IPFT, SEBI, GST, stamp-duty and sell-side STT
-  components. Contract notes remain authoritative; import their actual costs with
+  components. A plan is rejected when estimated round-trip costs exceed 35% of its
+  planned gross reward. Take-profit prices are raised to cover estimated entry/exit
+  costs and the playbook's minimum net reward multiple. Contract notes remain
+  authoritative; import their actual costs with
   `python scripts/import_broker_costs.py costs.csv`.
 - Displayed depth limits quantity; partial exits persist. No stale or invented fills.
 - Five-minute cooldown after exits, immutable daily limits, durable stop/restart state.
@@ -95,7 +100,8 @@ rules retain exit authority.
 - Set `KIWIT_OPTIONS_EVENT_CALENDAR` to a point-in-time JSON file matching
   `config/options-event-calendar.example.json`. Verified high-impact events within two
   hours block entries. The file requires an owner, source reference and timezone-aware
-  `as_of`; after 30 days it becomes invalid. Unconfigured or invalid coverage is reported as unknown.
+  `as_of`; after 30 days it becomes invalid. Unconfigured, invalid or non-clear
+  coverage blocks entries before AI reservation while shadow scans continue.
 - Regular-session holidays use the versioned 2026 NSE F&O calendar; unknown years block entries.
   Groww's index quote was verified to lack a trade timestamp. Instead, the adapter
   uses its documented `/v1/historical/candles` endpoint and completed candle close
