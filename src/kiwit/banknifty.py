@@ -127,7 +127,25 @@ class BankNiftyStore:
             "INSERT INTO banknifty_market_history("
             "trading_date,observed_at,spot,market_snapshot,strategy_selection,scan_state) "
             "VALUES(%s,%s,%s,%s::jsonb,%s::jsonb,%s) "
-            "ON CONFLICT(trading_date,observed_at) DO NOTHING",
+            "ON CONFLICT(trading_date,observed_at) DO UPDATE SET "
+            "spot=CASE WHEN EXCLUDED.scan_state='live_observation' THEN EXCLUDED.spot "
+            "ELSE banknifty_market_history.spot END,"
+            "market_snapshot=CASE "
+            "WHEN EXCLUDED.market_snapshot ? 'decision_event_key' "
+            "THEN banknifty_market_history.market_snapshot || EXCLUDED.market_snapshot "
+            "WHEN banknifty_market_history.market_snapshot ? 'decision_event_key' "
+            "THEN EXCLUDED.market_snapshot || banknifty_market_history.market_snapshot "
+            "ELSE EXCLUDED.market_snapshot END,"
+            "strategy_selection=CASE "
+            "WHEN EXCLUDED.market_snapshot ? 'decision_event_key' THEN EXCLUDED.strategy_selection "
+            "WHEN banknifty_market_history.market_snapshot ? 'decision_event_key' "
+            "THEN banknifty_market_history.strategy_selection "
+            "ELSE EXCLUDED.strategy_selection END,"
+            "scan_state=CASE "
+            "WHEN banknifty_market_history.scan_state='live_observation' "
+            "OR EXCLUDED.scan_state='live_observation' THEN 'live_observation' "
+            "WHEN EXCLUDED.market_snapshot ? 'decision_event_key' THEN EXCLUDED.scan_state "
+            "ELSE banknifty_market_history.scan_state END",
             (
                 state["day"],
                 snapshot["spot_at"],

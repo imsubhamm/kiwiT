@@ -185,6 +185,79 @@ def test_observer_without_run_cannot_create_ai_call_or_position(db):
     assert analyst.calls == 0
 
 
+def _snapshot_write_fixtures():
+    observer_snapshot = {
+        'spot_at': NOW.isoformat(),
+        'spot': '55000',
+        'candidates': [{'symbol': 'BANKNIFTY26SEP55000CE', 'quote': {'bid': '100', 'ask': '101'}}],
+        'chart_cache': {'daily': [{'at': NOW.isoformat(), 'close': '55000'}]},
+        'provenance': {'release': 'test'},
+    }
+    selection = {
+        'version': 'selector-test',
+        'plans': [{'id': 'plan-1', 'symbol': 'BANKNIFTY26SEP55000CE'}],
+        'evaluations': [{'playbook': 'range_reversal', 'eligible': True}],
+        'mode': 'executable',
+    }
+    decision_snapshot = {
+        key: value for key, value in observer_snapshot.items() if key != 'chart_cache'
+    }
+    decision_snapshot.update({
+        'event_context': {'coverage': 'configured', 'risk': 'clear'},
+        'strategy_selection': selection,
+        'entry_gate': {'allowed': True, 'reason_codes': []},
+        'decision_event_key': 'decision-1',
+    })
+    return observer_snapshot, decision_snapshot, selection
+
+
+def _assert_enriched_market_snapshot(connection):
+    rows = connection.execute(
+        'SELECT recorded_at,market_snapshot,strategy_selection,scan_state '
+        'FROM banknifty_market_history'
+    ).fetchall()
+    assert len(rows) == 1
+    recorded_at, snapshot, selection, scan_state = rows[0]
+    assert snapshot['candidates'][0]['symbol'] == 'BANKNIFTY26SEP55000CE'
+    assert snapshot['chart_cache']['daily'][0]['close'] == '55000'
+    assert snapshot['event_context'] == {'coverage': 'configured', 'risk': 'clear'}
+    assert snapshot['entry_gate'] == {'allowed': True, 'reason_codes': []}
+    assert snapshot['decision_event_key'] == 'decision-1'
+    assert selection['plans'][0]['id'] == 'plan-1'
+    assert selection['evaluations'][0]['playbook'] == 'range_reversal'
+    assert scan_state == 'live_observation'
+    return recorded_at
+
+
+def test_observer_first_snapshot_is_enriched_and_decision_retry_is_idempotent(db):
+    service = BankNiftyService(db, None, market=Market(), analyst=Analyst(), clock=lambda: NOW)
+    observer, decision, selection = _snapshot_write_fixtures()
+    day = str(NOW.astimezone(IST).date())
+    with service.store.locked() as connection:
+        service.store.record_market_snapshot(connection, {'day': day, 'detail': 'live_observation'},
+                                             observer, {'plans': [], 'evaluations': [],
+                                                        'mode': 'observation_only'})
+        service.store.record_market_snapshot(connection, {'day': day, 'detail': 'Scanning Bank Nifty'},
+                                             decision, selection)
+        first_recorded_at = _assert_enriched_market_snapshot(connection)
+        service.store.record_market_snapshot(connection, {'day': day, 'detail': 'Scanning Bank Nifty'},
+                                             decision, selection)
+        assert _assert_enriched_market_snapshot(connection) == first_recorded_at
+
+
+def test_decision_first_snapshot_survives_later_observer_write(db):
+    service = BankNiftyService(db, None, market=Market(), analyst=Analyst(), clock=lambda: NOW)
+    observer, decision, selection = _snapshot_write_fixtures()
+    day = str(NOW.astimezone(IST).date())
+    with service.store.locked() as connection:
+        service.store.record_market_snapshot(connection, {'day': day, 'detail': 'Scanning Bank Nifty'},
+                                             decision, selection)
+        service.store.record_market_snapshot(connection, {'day': day, 'detail': 'live_observation'},
+                                             observer, {'plans': [], 'evaluations': [],
+                                                        'mode': 'observation_only'})
+        _assert_enriched_market_snapshot(connection)
+
+
 def test_frozen_selector_replays_without_model_or_future_data():
     from test_playbooks import fixtures
 
