@@ -23,8 +23,10 @@ def main():
         bundle = {'format': 'banknifty-evidence-v1', 'execution': 'paper-only',
             'sessions': records('SELECT trading_date,state FROM banknifty_sessions ORDER BY trading_date'),
             'reports': records('SELECT trading_date,report,delivery_status FROM banknifty_daily_reports ORDER BY trading_date'),
-            'market_tape': records("SELECT trading_date,observed_at,recorded_at,market_snapshot FROM banknifty_market_history "
-                                   "WHERE scan_state='live_observation' ORDER BY recorded_at,observed_at"),
+            'market_tape': records("SELECT trading_date,observed_at,recorded_at,market_snapshot,"
+                                   "strategy_selection,scan_state FROM banknifty_market_history "
+                                   "WHERE scan_state='live_observation' "
+                                   "OR market_snapshot ? 'decision_event_key' ORDER BY recorded_at,observed_at"),
             'calls': records('SELECT call_id,trading_date,created_at,state,snapshot,result FROM banknifty_ai_calls ORDER BY slot'),
             'events': records('SELECT event_id,trading_date,event_at,kind,detail FROM banknifty_events ORDER BY event_id'),
             'outcomes': records('SELECT * FROM banknifty_trade_outcomes ORDER BY last_exit_at'),
