@@ -33,8 +33,11 @@ def quote(now=NOW, bid="100", ask="101", size=600):
 @pytest.fixture(autouse=True)
 def configured_event_calendar(tmp_path, monkeypatch):
     path = tmp_path / "events.json"
-    path.write_text(json.dumps({"version": "test", "as_of": NOW.isoformat(), "owner": "test",
-                                "source_reference": "https://example.invalid/test", "events": []}))
+    path.write_text(json.dumps({"version": "event-calendar-v2", "as_of": NOW.isoformat(), "owner": "test",
+                                "source_reference": "https://example.invalid/test",
+                                "coverage_start": str(NOW.date()),
+                                "coverage_end": str((NOW + timedelta(days=7)).date()),
+                                "events": []}))
     monkeypatch.setenv("KIWIT_OPTIONS_EVENT_CALENDAR", str(path))
 
 
@@ -416,8 +419,11 @@ def desk(db, monkeypatch, tmp_path):
     monkeypatch.setenv("KIWIT_BANKNIFTY_AI_ENABLED", "true")
     monkeypatch.setenv("OPENAI_API_KEY", "test-not-a-real-key")
     calendar = tmp_path / "desk-events.json"
-    calendar.write_text(json.dumps({"version": "test", "as_of": NOW.isoformat(), "owner": "test",
-                                    "source_reference": "https://example.invalid/test", "events": []}))
+    calendar.write_text(json.dumps({"version": "event-calendar-v2", "as_of": NOW.isoformat(), "owner": "test",
+                                    "source_reference": "https://example.invalid/test",
+                                    "coverage_start": str(NOW.date()),
+                                    "coverage_end": str((NOW + timedelta(days=7)).date()),
+                                    "events": []}))
     monkeypatch.setenv("KIWIT_OPTIONS_EVENT_CALENDAR", str(calendar))
     market, analyst, clock = Market(), Analyst(), [NOW]
     service = BankNiftyService(db, None, market=market, analyst=analyst, clock=lambda: clock[0])

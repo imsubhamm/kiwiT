@@ -69,6 +69,13 @@ charge and are never replayed. Independent exits continue throughout.
 
 ## Deployment and permissions
 
+Provision `KIWIT_OPTIONS_EVENT_CALENDAR` before deployment. The referenced v2 JSON document must
+cover the current IST day, be no more than seven days old, cite an official HTTPS source at the
+calendar and event level, and use only `low`, `medium` or `high` impact. Run
+`scripts/validate_options_event_calendar.py --path <calendar.json>` as the `kiwit` user before an
+atomic replacement. Deployment performs the same validation and rolls back before enabling workers
+when it fails. Do not use an empty event list unless the cited source verifies complete coverage.
+
 Apply migrations through 015 using the configured owner. The current accepted setup
 uses `neondb_owner`; role separation is optional and is not a blocker for this build.
 For a later role separation, provision roles using

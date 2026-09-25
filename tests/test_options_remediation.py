@@ -87,9 +87,11 @@ def test_ai_receives_available_option_fields_and_bounded_premium_history():
 
 def test_verified_event_calendar_blocks_only_configured_high_impact_window(tmp_path, monkeypatch):
     path = tmp_path / "events.json"
-    path.write_text(json.dumps({"version": "fixture", "as_of": NOW.isoformat(), "owner": "test",
-                                "source_reference": "https://example.invalid/fixture", "events": [
-        {"at": (NOW + timedelta(minutes=30)).isoformat(), "name": "Verified fixture", "impact": "high"}]}))
+    path.write_text(json.dumps({"version": "event-calendar-v2", "as_of": NOW.isoformat(), "owner": "test",
+                                "source_reference": "https://example.invalid/fixture",
+                                "coverage_start": str(NOW.date()), "coverage_end": str(NOW.date()), "events": [
+        {"at": (NOW + timedelta(minutes=30)).isoformat(), "name": "Verified fixture", "impact": "high",
+         "source_reference": "https://example.invalid/fixture/event"}]}))
     monkeypatch.setenv("KIWIT_OPTIONS_EVENT_CALENDAR", str(path))
     context = event_context(NOW)
     assert context["coverage"] == "configured" and context["risk"] == "high"
@@ -106,6 +108,32 @@ def test_missing_event_calendar_fails_closed_before_ai(monkeypatch):
     assert select_plans(snapshot, state, NOW)["plans"] == []
     gate = entry_gate(state, NOW, [], context)
     assert not gate["allowed"] and "EVENT_CALENDAR_UNAVAILABLE" in gate["reason_codes"]
+
+
+@pytest.mark.parametrize(("change", "reason"), [
+    ({"coverage_start": "2026-09-26", "coverage_end": "2026-09-30"}, "CALENDAR_DAY_NOT_COVERED"),
+    ({"as_of": (NOW - timedelta(days=8)).isoformat()}, "CALENDAR_STALE"),
+    ({"events": [{"at": NOW.isoformat(), "name": "Bad impact", "impact": "unknown",
+                   "source_reference": "https://example.invalid/event"}]}, "CALENDAR_EVENT_IMPACT_INVALID"),
+    ({"events": [{"at": NOW.isoformat(), "name": "Missing source", "impact": "high"}]},
+     "CALENDAR_EVENT_SOURCE_INVALID"),
+])
+def test_event_calendar_rejects_incomplete_or_stale_coverage(tmp_path, change, reason):
+    payload = {
+        "version": "event-calendar-v2",
+        "as_of": NOW.isoformat(),
+        "owner": "test",
+        "source_reference": "https://example.invalid/calendar",
+        "coverage_start": str(NOW.date()),
+        "coverage_end": str(NOW.date()),
+        "events": [],
+    }
+    payload.update(change)
+    path = tmp_path / "events.json"
+    path.write_text(json.dumps(payload))
+    context = event_context(NOW, path)
+    assert context["coverage"] == "invalid"
+    assert context["reason_code"] == reason
 
 
 def test_playbook_exit_is_cost_aware_and_not_universal():

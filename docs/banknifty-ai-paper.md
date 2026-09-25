@@ -99,8 +99,9 @@ rules retain exit authority.
   when present, and missing coverage is explicit. No IV or Greek is invented.
 - Set `KIWIT_OPTIONS_EVENT_CALENDAR` to a point-in-time JSON file matching
   `config/options-event-calendar.example.json`. Verified high-impact events within two
-  hours block entries. The file requires an owner, source reference and timezone-aware
-  `as_of`; after 30 days it becomes invalid. Unconfigured, invalid or non-clear
+  hours block entries. The file requires an owner, a top-level source, an event-specific
+  source, explicit coverage dates and timezone-aware `as_of`; after seven days it becomes invalid.
+  The current IST trading day must fall inside the declared coverage. Unconfigured, invalid or non-clear
   coverage blocks entries before AI reservation while shadow scans continue.
 - Regular-session holidays use the versioned 2026 NSE F&O calendar; unknown years block entries.
   Groww's index quote was verified to lack a trade timestamp. Instead, the adapter

@@ -40,5 +40,13 @@ backup_dir=$2
 def test_migration_follows_drain_and_timers_start_after_readiness():
     script = Path('deploy/remote_deploy.sh').read_text()
     main = script[script.index('trap rollback ERR'):]
-    assert main.index('drained=true') < main.index('manage_database.py') < main.index('ln -sfn')
+    assert main.index('drained=true') < main.index('validate_options_event_calendar.py') < main.index('manage_database.py')
+    assert main.index('manage_database.py') < main.index('ln -sfn')
     assert main.index('http://127.0.0.1:8001/ready') < main.index('systemctl enable --now')
+
+
+def test_deployment_refuses_to_start_without_a_valid_options_calendar():
+    script = Path('deploy/remote_deploy.sh').read_text()
+    assert 'KIWIT_OPTIONS_EVENT_CALENDAR is required' in script
+    assert 'runuser -u kiwit' in script
+    assert '--path "$calendar_path"' in script
