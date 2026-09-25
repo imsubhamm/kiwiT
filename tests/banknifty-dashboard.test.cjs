@@ -87,6 +87,21 @@ test('unavailable server keeps new runs disabled with a visible explanation',asy
   context.call=async()=>{throw Error('Offline')};timers[0]();await settle();
   assert.equal(nodes['bn-run'].disabled,true);assert.match(nodes['bn-detail'].textContent,/Offline/);
 });
+test('strategy readiness degradation is prominent while process liveness stays separate',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  data.session={state:'running',detail:'Scanning',entries:0,position:null};
+  data.operations={status:'ok',reason_codes:[],security_notices:[],workers:{},funnel:{},
+    rejection_counts:[],recovery_trades:0,recovery_pnl:'0',
+    liveness:{status:'ok',reason_codes:[]},
+    strategy_readiness:{status:'degraded',reason_code:'EVENT_CALENDAR_UNAVAILABLE',
+      first_seen_at:'2026-09-11T04:55:00Z',duration_seconds:300,last_scan_at:'2026-09-11T05:00:00Z'}};
+  timers[0]();await settle();
+  assert.match(nodes['bn-readiness'].textContent,/Strategy readiness degraded.*EVENT_CALENDAR_UNAVAILABLE.*300s/);
+  assert.match(nodes['bn-next-action'].textContent,/process is live.*new entries are disabled/i);
+  const operations=nodes['bn-operations'].children.map(n=>n.textContent).join('\n');
+  assert.match(operations,/Process liveness: ok.*Workers healthy/);
+  assert.match(operations,/Strategy readiness: degraded.*EVENT_CALENDAR_UNAVAILABLE.*300s/);
+});
 test('chart and evidence render safely, support timeframes and label stale data',async()=>{
   const {nodes,data,timers}=setup();await settle();
   const bar={at:'2026-01-01T09:30:00+05:30',open:100,high:105,low:99,close:103};

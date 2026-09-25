@@ -16,7 +16,7 @@ from kiwit.chart_analysis import history_context
 from kiwit.intraday import IST, SignalMailer
 from kiwit.options_ai import AIFailure, OpenAIPaperAnalyst
 from kiwit.options_calendar import regular_session
-from kiwit.options_operations import decision_reason_codes
+from kiwit.options_operations import decision_reason_codes, strategy_readiness
 
 
 def test_decision_reason_codes_grace_and_fail_closed_heartbeat():
@@ -36,6 +36,41 @@ def test_decision_reason_codes_grace_and_fail_closed_heartbeat():
     assert decision_reason_codes({"status": "failed", "age_seconds": 10}, running=True, local=open_tick) == [
         "DECISION_WORKER_FAILED"
     ]
+
+
+def test_strategy_readiness_distinguishes_no_setup_from_configuration_blocker():
+    now = datetime(2026, 9, 25, 11, 0, tzinfo=IST)
+    no_setup = strategy_readiness([(now, ["NO_ELIGIBLE_PLAN"])], now, running=True)
+    assert no_setup["status"] == "ready"
+    assert no_setup["reason_code"] is None
+
+    blocked = strategy_readiness(
+        [
+            (now - timedelta(seconds=10), ["NO_ELIGIBLE_PLAN", "EVENT_CALENDAR_UNAVAILABLE"]),
+            (now - timedelta(seconds=70), ["EVENT_CALENDAR_UNAVAILABLE"]),
+            (now - timedelta(seconds=130), ["NO_ELIGIBLE_PLAN"]),
+        ],
+        now,
+        running=True,
+    )
+    assert blocked == {
+        "status": "degraded",
+        "reason_code": "EVENT_CALENDAR_UNAVAILABLE",
+        "first_seen_at": (now - timedelta(seconds=70)).isoformat(),
+        "duration_seconds": 70,
+        "last_scan_at": (now - timedelta(seconds=10)).isoformat(),
+    }
+
+    cleared = strategy_readiness(
+        [
+            (now, ["NO_ELIGIBLE_PLAN"]),
+            (now - timedelta(seconds=10), ["EVENT_CALENDAR_UNAVAILABLE"]),
+        ],
+        now,
+        running=True,
+    )
+    assert cleared["status"] == "ready"
+    assert cleared["duration_seconds"] == 0
 
 
 def test_ai_failure_mail_includes_safe_category():
@@ -209,6 +244,47 @@ def test_calendar_block_keeps_shadow_evidence_without_ai_or_execution(desk, monk
     assert scan['shadow_plans'][0]['block_reason_codes'] == ['HIGH_IMPACT_EVENT_WINDOW']
     assert scan['entry_gate']['allowed'] is False
     assert 'HIGH_IMPACT_EVENT_WINDOW' in scan['entry_gate']['reason_codes']
+
+
+def test_diagnostics_degrades_for_calendar_configuration_and_clears(desk, monkeypatch):
+    unavailable = {
+        'version': 'event-calendar-v2',
+        'coverage': 'unconfigured',
+        'risk': 'unknown',
+        'events': [],
+        'reason_code': 'CALENDAR_PATH_UNCONFIGURED',
+    }
+    monkeypatch.setattr('kiwit.banknifty.event_context', lambda _now: unavailable)
+    service, _market, analyst, clock = desk
+    state = warm(desk)
+    assert state['position'] is None
+    assert analyst.calls == 0
+    service.observe()
+    service.supervise()
+
+    result = service.status()['operations']
+    assert result['status'] == 'degraded'
+    assert 'EVENT_CALENDAR_UNAVAILABLE' in result['reason_codes']
+    assert result['liveness']['status'] == 'ok'
+    assert result['strategy_readiness']['status'] == 'degraded'
+    assert result['strategy_readiness']['reason_code'] == 'EVENT_CALENDAR_UNAVAILABLE'
+    assert result['strategy_readiness']['first_seen_at'] is not None
+    assert result['strategy_readiness']['duration_seconds'] >= 0
+
+    configured = {
+        'version': 'event-calendar-v2',
+        'coverage': 'configured',
+        'risk': 'clear',
+        'events': [],
+    }
+    monkeypatch.setattr('kiwit.banknifty.event_context', lambda _now: configured)
+    clock[0] += timedelta(minutes=1)
+    service.run_once()
+    result = service.status()['operations']
+    assert result['status'] == 'ok'
+    assert result['strategy_readiness']['status'] == 'ready'
+    assert result['strategy_readiness']['reason_code'] is None
+    assert result['strategy_readiness']['duration_seconds'] == 0
 
 
 def _snapshot_write_fixtures():
@@ -419,7 +495,9 @@ def test_decision_heartbeat_is_required_during_a_running_session(desk):
     service.start(100000, 5, 10, 'test')
     service.observe()
     service.supervise()
-    assert 'DECISION_HEARTBEAT_STALE' in diagnostics(service.store, clock[0])['reason_codes']
+    result = diagnostics(service.store, clock[0])
+    assert 'DECISION_HEARTBEAT_STALE' in result['reason_codes']
+    assert result['liveness']['status'] == 'degraded'
 
 
 def test_decision_heartbeat_has_grace_at_session_open(desk):
@@ -430,7 +508,9 @@ def test_decision_heartbeat_has_grace_at_session_open(desk):
     service.start(100000, 5, 10, 'test')
     service.observe()
     service.supervise()
-    assert 'DECISION_HEARTBEAT_STALE' not in diagnostics(service.store, clock[0])['reason_codes']
+    result = diagnostics(service.store, clock[0])
+    assert 'DECISION_HEARTBEAT_STALE' not in result['reason_codes']
+    assert result['liveness']['status'] == 'ok'
 
 
 def test_fail_closed_entry_does_not_page_as_decision_worker_failed(desk):
