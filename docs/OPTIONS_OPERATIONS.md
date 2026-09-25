@@ -73,8 +73,10 @@ Provision `KIWIT_OPTIONS_EVENT_CALENDAR` before deployment. The referenced v2 JS
 cover the current IST day, be no more than seven days old, cite an official HTTPS source at the
 calendar and event level, and use only `low`, `medium` or `high` impact. Run
 `scripts/validate_options_event_calendar.py --path <calendar.json>` as the `kiwit` user before an
-atomic replacement. Deployment performs the same validation and rolls back before enabling workers
-when it fails. Do not use an empty event list unless the cited source verifies complete coverage.
+atomic replacement. Deployment performs the same validation and emits an explicit warning when it
+fails; the release continues so observation and safety fixes are not stranded, while the runtime
+calendar gate keeps entries fail-closed before any AI reservation. Do not use an empty event list
+unless the cited source verifies complete coverage.
 
 Apply migrations through 015 using the configured owner. The current accepted setup
 uses `neondb_owner`; role separation is optional and is not a blocker for this build.

@@ -45,8 +45,12 @@ def test_migration_follows_drain_and_timers_start_after_readiness():
     assert main.index('http://127.0.0.1:8001/ready') < main.index('systemctl enable --now')
 
 
-def test_deployment_refuses_to_start_without_a_valid_options_calendar():
+def test_deployment_warns_without_blocking_release_when_options_calendar_is_unavailable():
     script = Path('deploy/remote_deploy.sh').read_text()
-    assert 'KIWIT_OPTIONS_EVENT_CALENDAR is required' in script
+    assert 'entries remain fail-closed' in script
+    assert 'Options calendar unavailable' in script
+    assert 'Options calendar invalid' in script
     assert 'runuser -u kiwit' in script
     assert '--path "$calendar_path"' in script
+    calendar_block = script[script.index('calendar_path='):script.index('runuser -u kiwit -- env \\\n  HOME=')]
+    assert '\n  false\n' not in calendar_block

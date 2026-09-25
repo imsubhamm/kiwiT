@@ -117,13 +117,13 @@ fi
 set +a
 calendar_path=${KIWIT_OPTIONS_EVENT_CALENDAR:-}
 if [[ -z $calendar_path ]]; then
-  echo "KIWIT_OPTIONS_EVENT_CALENDAR is required; refusing to start options workers" >&2
-  false
-fi
-runuser -u kiwit -- env \
+  echo "::warning title=Options calendar unavailable::KIWIT_OPTIONS_EVENT_CALENDAR is not configured; entries remain fail-closed" >&2
+elif ! runuser -u kiwit -- env \
   KIWIT_OPTIONS_EVENT_CALENDAR="$calendar_path" \
   "$release_dir/.venv/bin/python" "$release_dir/scripts/validate_options_event_calendar.py" \
-  --path "$calendar_path"
+  --path "$calendar_path"; then
+  echo "::warning title=Options calendar invalid::Calendar validation failed; entries remain fail-closed" >&2
+fi
 runuser -u kiwit -- env \
   HOME=/opt/kiwit \
   KIWIT_DATABASE_URL="${KIWIT_MIGRATION_DATABASE_URL:-$KIWIT_DATABASE_URL}" \
