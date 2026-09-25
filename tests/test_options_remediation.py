@@ -97,7 +97,15 @@ def test_verified_event_calendar_blocks_only_configured_high_impact_window(tmp_p
     assert context["coverage"] == "configured" and context["risk"] == "high"
     snapshot, state, _ = fixtures()
     snapshot["event_context"] = context
-    assert select_plans(snapshot, state, NOW)["plans"] == []
+    selection = select_plans(snapshot, state, NOW)
+    assert selection["plans"] == []
+    shadow = selection["shadow_plans"][0]
+    assert shadow["block_reason_codes"] == ["HIGH_IMPACT_EVENT_WINDOW"]
+    assert shadow["source_pattern"]["id"] == snapshot["chart_analysis"]["patterns"][0]["id"]
+    assert shadow["selected_contract"]["symbol"] == snapshot["candidates"][0]["symbol"]
+    assert shadow["observed_quote"] == snapshot["candidates"][0]["quote"]
+    assert D(shadow["estimated_costs"]["round_trip_at_target"]) > 0
+    assert shadow["exit_experiments"]
 
 
 def test_missing_event_calendar_fails_closed_before_ai(monkeypatch):
@@ -105,7 +113,9 @@ def test_missing_event_calendar_fails_closed_before_ai(monkeypatch):
     context = event_context(NOW)
     snapshot, state, _ = fixtures()
     snapshot["event_context"] = context
-    assert select_plans(snapshot, state, NOW)["plans"] == []
+    selection = select_plans(snapshot, state, NOW)
+    assert selection["plans"] == []
+    assert selection["shadow_plans"][0]["block_reason_codes"] == ["EVENT_CALENDAR_UNAVAILABLE"]
     gate = entry_gate(state, NOW, [], context)
     assert not gate["allowed"] and "EVENT_CALENDAR_UNAVAILABLE" in gate["reason_codes"]
 

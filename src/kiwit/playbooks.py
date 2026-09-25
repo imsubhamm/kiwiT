@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal as D
 
 from .chart_analysis import VERSION as CHART_VERSION
-from .options_risk import exit_levels, fill_price, quantity_for, sizing_diagnostics, trade_limits
+from .options_risk import cost_breakdown, exit_levels, fill_price, quantity_for, sizing_diagnostics, trade_limits
 
 VERSION = "banknifty-selector-v5-cost-aware"
 PLAYBOOKS = (
@@ -170,7 +170,16 @@ def select_plans(snapshot, state, now):
         "validation": "unvalidated_paper_experiment",
         "evaluations": [],
         "plans": [],
+        "shadow_plans": [],
     }
+    events = snapshot.get("event_context") or {}
+    calendar_reason = (
+        "EVENT_CALENDAR_UNAVAILABLE"
+        if events.get("coverage") != "configured"
+        else "HIGH_IMPACT_EVENT_WINDOW"
+        if events.get("risk") != "clear"
+        else None
+    )
     for playbook in PLAYBOOKS:
         patterns = sorted(
             (p for p in analysis.get("patterns", []) if p.get("name") == playbook["pattern"]),
@@ -180,11 +189,6 @@ def select_plans(snapshot, state, now):
         reasons, chosen = [], None
         for pattern in patterns:
             rejected = route_reasons(analysis, pattern, playbook, now)
-            events = snapshot.get("event_context") or {}
-            if events.get("coverage") != "configured":
-                rejected.append("Verified event calendar unavailable; entry fails closed")
-            elif events.get("risk") != "clear":
-                rejected.append("Verified high-impact event window blocks entry")
             if rejected:
                 reasons.extend(rejected)
                 continue
@@ -282,19 +286,49 @@ def select_plans(snapshot, state, now):
                     "event_risk": snapshot.get("event_context", {}).get("risk", "unknown"),
                     "feature_coverage": snapshot.get("option_feature_coverage", {}),
                 }
+                if calendar_reason:
+                    entry_costs = cost_breakdown(fill * qty, "buy")
+                    chosen.update({
+                        "evidence_only": True,
+                        "execution_eligible": False,
+                        "block_reason_codes": [calendar_reason],
+                        "source_pattern": dict(pattern),
+                        "selected_contract": {
+                            key: value for key, value in contract.items()
+                            if key not in {"quote", "selection_eligible", "tracked"}
+                        },
+                        "observed_quote": dict(contract["quote"]),
+                        "estimated_costs": {
+                            "entry": {key: str(value) if isinstance(value, D) else value
+                                      for key, value in entry_costs.items()},
+                            "round_trip_at_target": str(exits["estimated_round_trip_cost"]),
+                            "cost_share_of_gross_reward": str(exits["cost_share_of_gross_reward"]),
+                        },
+                        "measurement_context": {"capital": str(state["amount"]), "retention_minutes": 60},
+                    })
+                    chosen["decision_context"].update(
+                        plan_valid_now=False,
+                        execution_blocked=True,
+                        execution_block_reason_codes=[calendar_reason],
+                    )
                 chosen["id"] = fingerprint(chosen)
                 break
             if chosen:
                 break
             reasons.append("No affordable liquid contract or valid unexpired trigger")
-        if chosen:
+        if chosen and calendar_reason:
+            selection["shadow_plans"].append(chosen)
+        elif chosen:
             selection["plans"].append(chosen)
         selection["evaluations"].append(
             {
                 "playbook_id": playbook["id"],
-                "eligible": bool(chosen),
+                "eligible": bool(chosen and not calendar_reason),
+                "shadow_plan_id": chosen["id"] if chosen and calendar_reason else None,
                 "reasons": ["Fresh setup and aligned regimes; awaiting AI selection"]
-                if chosen
+                if chosen and not calendar_reason
+                else [calendar_reason]
+                if chosen and calendar_reason
                 else sorted(set(reasons)) or ["No fresh matching chart setup"],
             }
         )
