@@ -137,21 +137,36 @@ def compare(bundle, *, horizon_minutes=15, extra_bps=0):
                             'Quote/depth gaps excluded; report exclusions before interpreting paired samples']}
 
 
-def rule_matrix(bundle, *, horizon_minutes=15):
-    """Apply cap/loss scenarios to the same observed opportunity stream."""
-    opportunities = []
+def _measurable_opportunities(bundle):
     for call in bundle.get('calls', []):
         result = call.get('result') or {}
         at_value = result.get('settled_at')
-        plans = call.get('snapshot', {}).get('strategy_selection', {}).get('plans', [])
-        if not at_value or not plans:
+        snapshot = call.get('snapshot', {})
+        if not at_value:
             continue
-        at = stamp(at_value)
-        observed = counterfactual(plans[0], bundle.get('market_tape', []), at, horizon_minutes)
+        for plan in snapshot.get('strategy_selection', {}).get('plans', []):
+            yield {'at': stamp(at_value), 'day': str(call['trading_date']),
+                   'capital': D(str(snapshot['capital'])), 'plan': plan, 'source': 'ai_call'}
+    for event in bundle.get('events', []):
+        if event.get('kind') != 'strategy_scan':
+            continue
+        detail = event.get('detail') or {}
+        for plan in detail.get('shadow_plans', []):
+            context = plan.get('measurement_context') or {}
+            if context.get('capital') is None or not event.get('event_at'):
+                continue
+            yield {'at': stamp(event['event_at']), 'day': str(event['trading_date']),
+                   'capital': D(str(context['capital'])), 'plan': plan, 'source': 'calendar_shadow'}
+
+
+def rule_matrix(bundle, *, horizon_minutes=15):
+    """Apply cap/loss scenarios to the same observed opportunity stream."""
+    opportunities = []
+    for item in _measurable_opportunities(bundle):
+        observed = counterfactual(item['plan'], bundle.get('market_tape', []), item['at'], horizon_minutes)
         if observed['status'] == 'observed':
-            opportunities.append({'at': at, 'day': str(call['trading_date']),
-                                  'capital': D(str(call['snapshot']['capital'])),
-                                  'net_pnl': D(observed['net_pnl'])})
+            opportunities.append({'at': item['at'], 'day': item['day'], 'capital': item['capital'],
+                                  'net_pnl': D(observed['net_pnl']), 'source': item['source']})
     opportunities.sort(key=lambda row: row['at'])
     rows = []
     for cap in (4, 6, 10):
@@ -177,23 +192,19 @@ def exit_matrix(bundle):
     """Compare playbook-specific holding horizons on identical retained quotes."""
     groups = {}
     total = excluded = 0
-    for call in bundle.get('calls', []):
-        result = call.get('result') or {}
-        at_value = result.get('settled_at')
-        for plan in call.get('snapshot', {}).get('strategy_selection', {}).get('plans', []):
-            if not at_value:
+    for item in _measurable_opportunities(bundle):
+        plan = item['plan']
+        for horizon in plan.get('exit_experiments', {}).get('max_hold_minutes', []):
+            total += 1
+            observed = counterfactual(plan, bundle.get('market_tape', []), item['at'], horizon)
+            key = (plan['playbook_id'], horizon)
+            group = groups.setdefault(key, {'playbook_id': key[0], 'horizon_minutes': horizon,
+                                            'observations': 0, 'net_pnl': D(0)})
+            if observed['status'] != 'observed':
+                excluded += 1
                 continue
-            for horizon in plan.get('exit_experiments', {}).get('max_hold_minutes', []):
-                total += 1
-                observed = counterfactual(plan, bundle.get('market_tape', []), stamp(at_value), horizon)
-                key = (plan['playbook_id'], horizon)
-                group = groups.setdefault(key, {'playbook_id': key[0], 'horizon_minutes': horizon,
-                                                'observations': 0, 'net_pnl': D(0)})
-                if observed['status'] != 'observed':
-                    excluded += 1
-                    continue
-                group['observations'] += 1
-                group['net_pnl'] += D(observed['net_pnl'])
+            group['observations'] += 1
+            group['net_pnl'] += D(observed['net_pnl'])
     rows = [{**value, 'net_pnl': str(value['net_pnl'])} for value in groups.values()]
     return {'format': 'options-exit-matrix-v1', 'attempted': total, 'excluded': excluded, 'scenarios': rows,
             'promotion_eligible': False}

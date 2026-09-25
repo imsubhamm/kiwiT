@@ -185,6 +185,32 @@ def test_observer_without_run_cannot_create_ai_call_or_position(db):
     assert analyst.calls == 0
 
 
+def test_calendar_block_keeps_shadow_evidence_without_ai_or_execution(desk, monkeypatch):
+    context = {'version': 'event-calendar-v2', 'coverage': 'configured', 'risk': 'high',
+               'events': [{'at': NOW.isoformat(), 'name': 'Fixture', 'impact': 'high'}]}
+    monkeypatch.setattr('kiwit.banknifty.event_context', lambda _now: context)
+    service, _market, analyst, clock = desk
+    state = warm(desk)
+    assert state['position'] is None and state['entries'] == 0
+    assert analyst.calls == 0
+    with service.store.locked() as connection:
+        calls = connection.execute('SELECT count(*) FROM banknifty_ai_calls').fetchone()[0]
+        tracked = connection.execute(
+            'SELECT contract,reasons,retain_until FROM banknifty_tracked_contracts'
+        ).fetchone()
+        scan = connection.execute(
+            "SELECT detail FROM banknifty_events WHERE kind='strategy_scan' ORDER BY event_id DESC LIMIT 1"
+        ).fetchone()[0]
+    assert calls == 0
+    assert tracked[0]['symbol'] == 'BANKNIFTY26SEP55000CE'
+    assert tracked[1] == ['calendar_blocked_shadow']
+    assert tracked[2] >= clock[0] + timedelta(minutes=60)
+    assert scan['plans'] == []
+    assert scan['shadow_plans'][0]['block_reason_codes'] == ['HIGH_IMPACT_EVENT_WINDOW']
+    assert scan['entry_gate']['allowed'] is False
+    assert 'HIGH_IMPACT_EVENT_WINDOW' in scan['entry_gate']['reason_codes']
+
+
 def _snapshot_write_fixtures():
     observer_snapshot = {
         'spot_at': NOW.isoformat(),

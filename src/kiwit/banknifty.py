@@ -1023,13 +1023,16 @@ class BankNiftyService:
                                  and now >= previous[2] + timedelta(minutes=2))
                 trigger["new"] = bool(trigger["call"] and
                                       (not previous or previous[0] != trigger["key"] or retry_due))
-                if not selection["plans"] and not current["position"]:
-                    current["detail"] = "No eligible entry plan; waiting for a supported setup"
-                elif not current["position"] and not gate["allowed"]:
+                if selection.get("shadow_plans") and not current["position"] and not gate["allowed"]:
                     current["detail"] = "Entry blocked; shadow scan retained: " + ", ".join(gate["reason_codes"])
+                elif not selection["plans"] and not current["position"]:
+                    current["detail"] = "No eligible entry plan; waiting for a supported setup"
                 self.store.save(connection, current)
                 self.store.record_market_snapshot(connection, current, snapshot, selection)
                 self.store.track_plans(connection, current, selection["plans"], snapshot["candidates"], now)
+                self.store.track_plans(connection, current, selection.get("shadow_plans", []),
+                                       snapshot["candidates"], now, minutes=60,
+                                       reason="calendar_blocked_shadow")
                 self.store.event(connection, current, "strategy_scan", {
                     **selection, "entry_gate": gate, "decision_event": trigger,
                     "mode": "executable" if gate["allowed"] else "shadow",
