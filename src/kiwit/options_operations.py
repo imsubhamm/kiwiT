@@ -6,6 +6,8 @@ from uuid import uuid4
 from .intraday import IST
 from .options_calendar import regular_session
 
+STRATEGY_CONFIGURATION_BLOCKERS = frozenset({"EVENT_CALENDAR_UNAVAILABLE"})
+
 
 def decision_reason_codes(worker, *, running, local):
     """Decision-loop health. Missing heartbeats in the first 150s after 09:30 IST are not stale."""
@@ -19,6 +21,41 @@ def decision_reason_codes(worker, *, running, local):
     if worker["status"] == "failed":
         return ["DECISION_WORKER_FAILED"]
     return []
+
+
+def strategy_readiness(scans, now, *, running):
+    """Summarize persistent configuration blockers separately from worker health."""
+    if not scans:
+        return {
+            "status": "warming_up" if running else "idle",
+            "reason_code": None,
+            "first_seen_at": None,
+            "duration_seconds": 0,
+            "last_scan_at": None,
+        }
+    last_scan_at, latest_reasons = scans[0]
+    active = sorted(STRATEGY_CONFIGURATION_BLOCKERS.intersection(latest_reasons or []))
+    if not active:
+        return {
+            "status": "ready" if running else "idle",
+            "reason_code": None,
+            "first_seen_at": None,
+            "duration_seconds": 0,
+            "last_scan_at": last_scan_at.isoformat(),
+        }
+    reason = active[0]
+    first_seen = last_scan_at
+    for observed_at, reason_codes in scans[1:]:
+        if reason not in (reason_codes or []):
+            break
+        first_seen = observed_at
+    return {
+        "status": "degraded",
+        "reason_code": reason,
+        "first_seen_at": first_seen.isoformat(),
+        "duration_seconds": max(0, int((now - first_seen).total_seconds())),
+        "last_scan_at": last_scan_at.isoformat(),
+    }
 
 
 def heartbeat(store, worker, now, status, detail=None):
@@ -112,20 +149,34 @@ def diagnostics(store, now):
             "SELECT observed_at,status,reason_code,detail FROM banknifty_worker_incidents "
             "WHERE trading_date=%s ORDER BY observed_at DESC LIMIT 10", (day,),
         ).fetchall()
+        scans = connection.execute(
+            "SELECT event_at,detail->'entry_gate'->'reason_codes' FROM banknifty_events "
+            "WHERE trading_date=%s AND kind='strategy_scan' "
+            "ORDER BY event_at DESC,event_id DESC LIMIT 500",
+            (day,),
+        ).fetchall()
     health = {w: {"at": at.isoformat(), "status": status, "age_seconds": (now-at).total_seconds(), "detail": detail}
               for w, at, status, detail in workers}
     issues = []
+    liveness_issues = []
     running = bool(state and state.get("state") == "running" and state.get("day") == str(day))
     if in_session:
         for worker in ("supervisor", "observer"):
             if worker not in health or health[worker]["age_seconds"] > 150:
-                issues.append(worker.upper() + "_HEARTBEAT_STALE")
+                code = worker.upper() + "_HEARTBEAT_STALE"
+                issues.append(code)
+                liveness_issues.append(code)
             elif health[worker]["status"] == "failed":
-                issues.append(worker.upper() + "_FAILED")
+                code = worker.upper() + "_FAILED"
+                issues.append(code)
+                liveness_issues.append(code)
         observer_stamp = health.get("observer", {}).get("detail", {}).get("spot_at")
         if observer_stamp and (now - datetime.fromisoformat(observer_stamp)).total_seconds() > 180:
             issues.append("OBSERVED_MARKET_DATA_STALE")
-        issues.extend(decision_reason_codes(health.get("decision"), running=running, local=local))
+            liveness_issues.append("OBSERVED_MARKET_DATA_STALE")
+        decision_issues = decision_reason_codes(health.get("decision"), running=running, local=local)
+        issues.extend(decision_issues)
+        liveness_issues.extend(decision_issues)
     if len(calls) == 3 and all(status == "failed" for status, _ in calls):
         issues.append("AI_CONSECUTIVE_FAILURES")
     if state and state.get("position"):
@@ -144,7 +195,13 @@ def diagnostics(store, now):
         issues.append("CALENDAR_UNVERIFIED")
     elif regular_session(day + timedelta(days=60)) is None:
         notices.append("CALENDAR_UPDATE_DUE_WITHIN_60_DAYS")
+    strategy = strategy_readiness(scans, now, running=running)
+    if strategy["status"] == "degraded":
+        issues.append(strategy["reason_code"])
     return {"status": "degraded" if issues else "ok", "reason_codes": issues, "workers": health,
+            "liveness": {"status": "degraded" if liveness_issues else "ok",
+                         "reason_codes": liveness_issues},
+            "strategy_readiness": strategy,
             "in_session": in_session, "pending_reports": pending, "security_notices": notices,
             "unresolved_ai_calls": unresolved_calls,
             "interrupted_ai_calls": interrupted_calls[0], "interrupted_ai_reserved_usd": str(interrupted_calls[1]),
