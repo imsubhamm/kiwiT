@@ -53,3 +53,33 @@ curl --fail http://127.0.0.1:8001/ready
 ```
 
 The shared EC2 host reserves port 8001 for KiwiT; port 8000 belongs to another application. Releases preserve `/etc/kiwit/kiwit.env`; provision or rotate application secrets on the host separately. GitHub needs only the SSH deployment secrets. The deploy script updates the release identity and backs up host configuration for rollback.
+
+## Production options event calendar
+
+Options workers fail closed without a verified event calendar. Keep the mutable calendar outside
+release directories and make it readable by the unprivileged service account:
+
+```bash
+sudo install -d -o root -g kiwit -m 0750 /etc/kiwit/calendar
+sudo install -o root -g kiwit -m 0640 options-event-calendar.json \
+  /etc/kiwit/calendar/options-event-calendar.json
+sudo sed -i '/^KIWIT_OPTIONS_EVENT_CALENDAR=/d' /etc/kiwit/kiwit.env
+echo 'KIWIT_OPTIONS_EVENT_CALENDAR=/etc/kiwit/calendar/options-event-calendar.json' | \
+  sudo tee -a /etc/kiwit/kiwit.env >/dev/null
+```
+
+Use `config/options-event-calendar.example.json` as the schema. Every update needs an owner,
+an official HTTPS source, explicit coverage dates and event-specific sources. An empty event list
+is valid only when the cited source verifies the whole coverage period has no relevant events.
+Install updates atomically by writing a separate file, validating it, then moving it into place:
+
+```bash
+sudo -u kiwit /opt/kiwit/current/.venv/bin/python \
+  /opt/kiwit/current/scripts/validate_options_event_calendar.py \
+  --path /etc/kiwit/calendar/options-event-calendar.next.json
+sudo mv /etc/kiwit/calendar/options-event-calendar.next.json \
+  /etc/kiwit/calendar/options-event-calendar.json
+```
+
+Deployment validates the configured file as `kiwit` before migrations or activation. Missing,
+unreadable, stale, uncovered or malformed calendars abort deployment and restore the previous release.

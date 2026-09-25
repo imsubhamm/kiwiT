@@ -115,6 +115,15 @@ if [[ -f /etc/kiwit/migration.env ]]; then
   source /etc/kiwit/migration.env
 fi
 set +a
+calendar_path=${KIWIT_OPTIONS_EVENT_CALENDAR:-}
+if [[ -z $calendar_path ]]; then
+  echo "KIWIT_OPTIONS_EVENT_CALENDAR is required; refusing to start options workers" >&2
+  false
+fi
+runuser -u kiwit -- env \
+  KIWIT_OPTIONS_EVENT_CALENDAR="$calendar_path" \
+  "$release_dir/.venv/bin/python" "$release_dir/scripts/validate_options_event_calendar.py" \
+  --path "$calendar_path"
 runuser -u kiwit -- env \
   HOME=/opt/kiwit \
   KIWIT_DATABASE_URL="${KIWIT_MIGRATION_DATABASE_URL:-$KIWIT_DATABASE_URL}" \
