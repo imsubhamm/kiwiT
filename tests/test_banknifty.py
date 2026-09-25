@@ -35,7 +35,8 @@ def configured_event_calendar(tmp_path, monkeypatch):
     path = tmp_path / "events.json"
     path.write_text(json.dumps({"version": "event-calendar-v2", "as_of": NOW.isoformat(), "owner": "test",
                                 "source_reference": "https://example.invalid/test",
-                                "coverage_start": str(NOW.date()), "coverage_end": str(NOW.date()),
+                                "coverage_start": str(NOW.date()),
+                                "coverage_end": str((NOW + timedelta(days=7)).date()),
                                 "events": []}))
     monkeypatch.setenv("KIWIT_OPTIONS_EVENT_CALENDAR", str(path))
 
@@ -420,7 +421,8 @@ def desk(db, monkeypatch, tmp_path):
     calendar = tmp_path / "desk-events.json"
     calendar.write_text(json.dumps({"version": "event-calendar-v2", "as_of": NOW.isoformat(), "owner": "test",
                                     "source_reference": "https://example.invalid/test",
-                                    "coverage_start": str(NOW.date()), "coverage_end": str(NOW.date()),
+                                    "coverage_start": str(NOW.date()),
+                                    "coverage_end": str((NOW + timedelta(days=7)).date()),
                                     "events": []}))
     monkeypatch.setenv("KIWIT_OPTIONS_EVENT_CALENDAR", str(calendar))
     market, analyst, clock = Market(), Analyst(), [NOW]
