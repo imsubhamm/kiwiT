@@ -82,4 +82,6 @@ sudo mv /etc/kiwit/calendar/options-event-calendar.next.json \
 ```
 
 Deployment validates the configured file as `kiwit` before migrations or activation. Missing,
-unreadable, stale, uncovered or malformed calendars abort deployment and restore the previous release.
+unreadable, stale, uncovered or malformed calendars emit an explicit deployment warning and leave
+options entries fail-closed. They do not block API, observer or safety-worker deployment. This keeps
+market evidence and recovery services current while preventing AI reservations and new positions.
