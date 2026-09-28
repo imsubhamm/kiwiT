@@ -86,6 +86,8 @@
       globalThis.nitiSessionSnapshot = data;
       if (typeof CustomEvent !== "undefined") document.dispatchEvent(new CustomEvent("niti-session"));
       const s = data.session;
+      const ops = data.operations;
+      const strategyReadiness = ops?.strategy_readiness;
       const setMetric = (id, value) => { if (el(id)) el(id).textContent = value; };
       const rupees = value => Number.isFinite(Number(value)) ? new Intl.NumberFormat('en-IN', {style:'currency', currency:'INR', maximumFractionDigits:2}).format(Number(value)) : 'Unavailable';
       setMetric('bn-cash-card', s ? rupees(s.cash) : 'No session');
@@ -94,10 +96,12 @@
       setMetric('bn-data-card', !s?.position ? 'No open position' : s.valuation_fresh === true ? 'Fresh at last sync' : 'Stale / unconfirmed');
       const readiness = el('bn-readiness');
       const nextAction = el('bn-next-action');
+      const degradedStrategy = strategyReadiness?.status === 'degraded';
+      const blockerAge = degradedStrategy ? `${Math.round(strategyReadiness.duration_seconds)}s` : '';
       const brokerReadiness = data.operations?.broker_readiness;
       const brokerBlocked = brokerReadiness?.status === 'failed';
-      if (readiness) readiness.textContent = brokerBlocked ? (brokerReadiness.message || 'Groww session approval required') : !data.available ? 'Bank Nifty unavailable' : s?.state === 'stopping' ? 'Needs attention · session awaiting closure' : s?.state === 'running' ? 'Paper session running' : brokerReadiness?.status === 'ready' ? 'Groww approval and quote ready · paper only' : 'Bank Nifty connected · paper only';
-      if (nextAction) nextAction.textContent = brokerBlocked ? `Open Groww and approve today’s API session. First failure ${brokerReadiness.first_failed_at || 'not recorded'} · ${brokerReadiness.failure_count || 0} failed check${brokerReadiness.failure_count === 1 ? '' : 's'}. This alert clears after a successful read-only quote.` : !data.available ? 'The desk is unavailable. Check service configuration and sync again.' : s?.state === 'stopping' ? 'A previous session must finish before another Run. ' + (s.detail || 'Waiting for position reconciliation.') : s?.state === 'running' ? 'Monitor your position below. Stop & exit requests closure when an executable quote is available.' : 'Review the session details and limits below. The server checks trading eligibility when you request Run.';
+      if (readiness) readiness.textContent = brokerBlocked ? (brokerReadiness.message || 'Groww session approval required') : !data.available ? 'Bank Nifty unavailable' : degradedStrategy ? `Strategy readiness degraded · ${strategyReadiness.reason_code} · ${blockerAge}` : s?.state === 'stopping' ? 'Needs attention · session awaiting closure' : s?.state === 'running' ? 'Paper session running · strategy ready' : brokerReadiness?.status === 'ready' ? 'Groww approval and quote ready · paper only' : 'Bank Nifty connected · paper only';
+      if (nextAction) nextAction.textContent = brokerBlocked ? `Open Groww and approve today’s API session. First failure ${brokerReadiness.first_failed_at || 'not recorded'} · ${brokerReadiness.failure_count || 0} failed check${brokerReadiness.failure_count === 1 ? '' : 's'}. This alert clears after a successful read-only quote.` : !data.available ? 'The desk is unavailable. Check service configuration and sync again.' : degradedStrategy ? `The process is live, but new entries are disabled. Blocker first seen ${strategyReadiness.first_seen_at}.` : s?.state === 'stopping' ? 'A previous session must finish before another Run. ' + (s.detail || 'Waiting for position reconciliation.') : s?.state === 'running' ? 'Monitor your position below. Stop & exit requests closure when an executable quote is available.' : 'Review the session details and limits below. The server checks trading eligibility when you request Run.';
 
       renderAnalysis(s?.chart_analysis);
       const selection=s?.strategy_selection;
@@ -162,11 +166,12 @@
       el('bn-totals').textContent = s ? `Paper cash ₹${s.cash} · P&L ₹${s.pnl}${s.valuation_fresh === false ? ' (STALE valuation)' : ''} · Session loss ${s.loss_pct}% · Session profit cap ${s.session_profit_cap_enabled === false ? 'off' : s.profit_pct + '%'} · Trade stop/target ${s.trade_stop_pct ?? s.loss_pct}% / ${s.trade_target_pct ?? s.profit_pct}% · Entries ${s.entries} · ${s.position ? s.position.contract.symbol + ' × ' + s.position.quantity : 'No open position'} · Worker ${s.last_tick || 'not seen yet'}` : 'No paper session';
       el('bn-budget').textContent = data.budget ? `API allowance: $${data.budget.rolling_used_or_reserved_usd ?? '—'} / $${data.budget.rolling_limit_usd ?? '—'} over ${data.budget.rolling_days ?? 30} days · today $${data.budget.today_used_or_reserved_usd ?? '—'} / $${data.budget.daily_limit_usd} · lifetime ledger $${data.budget.used_or_reserved_usd} · conservative estimate, not invoice` : 'Budget unavailable';
       lines('bn-decisions', (data.decisions || []).map(d => `${d.at} · ${d.state} · ${d.result?.decision ? d.result.decision.action + ': ' + d.result.decision.summary : 'No usable AI decision'}${d.result?.failure ? ' · '+d.result.failure.category+' · HTTP '+(d.result.failure.http_status || '—')+' · '+d.result.failure.latency_ms+'ms' : ''}${d.result?.validation_error ? ' · BLOCKED: '+d.result.validation_error : ''}`));
-      const ops=data.operations;
       if(ops) {
         const broker = ops.broker_readiness;
         lines('bn-operations',[
           `Operational status: ${ops.status} · ${ops.reason_codes.join(', ') || 'No active blockers'}`,
+          `Process liveness: ${ops.liveness?.status || 'unknown'} · ${ops.liveness?.reason_codes?.join(', ') || 'Workers healthy'}`,
+          `Strategy readiness: ${strategyReadiness?.status || 'unknown'}${strategyReadiness?.reason_code ? ' · '+strategyReadiness.reason_code+' · first seen '+strategyReadiness.first_seen_at+' · '+Math.round(strategyReadiness.duration_seconds)+'s' : ''}`,
           ...(broker ? [`Groww readiness: ${broker.status.toUpperCase()} · ${broker.reason_code || 'READ_ONLY_CHECK_OK'} · failed checks ${broker.failure_count} · first failure ${broker.first_failed_at || 'none'} · recovered ${broker.recovered_at || 'not yet'}`] : []),
           ...(ops.security_notices || []).map(notice=>`Notice: ${notice}`),
           `Recovery trades excluded from intraday results: ${ops.recovery_trades} · P&L ₹${ops.recovery_pnl}`,
