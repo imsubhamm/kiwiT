@@ -34,7 +34,7 @@ from .options_calendar import regular_session
 from .options_events import event_context
 from .options_market import BankNiftyMarket
 from .options_operations import diagnostics, heartbeat, report_backlog
-from .options_policy import ENTRY_CAP, decision_event, entry_gate
+from .options_policy import ENTRY_CAP, decision_event, entry_blocker_detail, entry_gate
 from .options_risk import (
     BROKER_COST_VERSION,
     cost_breakdown,
@@ -1023,10 +1023,10 @@ class BankNiftyService:
                                  and now >= previous[2] + timedelta(minutes=2))
                 trigger["new"] = bool(trigger["call"] and
                                       (not previous or previous[0] != trigger["key"] or retry_due))
-                if selection.get("shadow_plans") and not current["position"] and not gate["allowed"]:
-                    current["detail"] = "Entry blocked; shadow scan retained: " + ", ".join(gate["reason_codes"])
-                elif not selection["plans"] and not current["position"]:
-                    current["detail"] = "No eligible entry plan; waiting for a supported setup"
+                if not current["position"]:
+                    blocker_detail = entry_blocker_detail(gate)
+                    if blocker_detail:
+                        current["detail"] = blocker_detail
                 self.store.save(connection, current)
                 self.store.record_market_snapshot(connection, current, snapshot, selection)
                 self.store.track_plans(connection, current, selection["plans"], snapshot["candidates"], now)

@@ -130,3 +130,17 @@ This was a connectivity check outside the session ledger, not a trade or perform
 test. No trading session was started. The $2 buffer covers this small setup call.
 
 See [OPTIONS_OPERATIONS.md](OPTIONS_OPERATIONS.md) for independent observation/supervision, recovery classification and delivery catch-up.
+
+
+### Entry blocker status (KIW-42)
+
+Each flat-session scan renders current gate reasons as readable text with bracketed
+machine-readable codes, regardless of whether a shadow plan exists. Precedence is:
+session P&L limit, daily entry cap, invalid calendar, unavailable calendar,
+high-impact event window, active position, post-exit cooldown, then no eligible plan.
+Multiple blockers use that order; no-eligible-plan text appears only when it is the
+sole blocker. The scan's `entry_gate.reason_codes` retains the full ordered list.
+Invalid calendars use `EVENT_CALENDAR_INVALID`; missing configuration uses
+`EVENT_CALENDAR_UNAVAILABLE`. Status is rebuilt each scan, so recovery clears the
+calendar message and restores the current setup/decision status. Existing position
+monitoring and terminal session status retain their authority.

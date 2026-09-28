@@ -174,7 +174,9 @@ def select_plans(snapshot, state, now):
     }
     events = snapshot.get("event_context") or {}
     calendar_reason = (
-        "EVENT_CALENDAR_UNAVAILABLE"
+        "EVENT_CALENDAR_INVALID"
+        if events.get("coverage") == "invalid"
+        else "EVENT_CALENDAR_UNAVAILABLE"
         if events.get("coverage") != "configured"
         else "HIGH_IMPACT_EVENT_WINDOW"
         if events.get("risk") != "clear"
