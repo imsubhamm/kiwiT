@@ -278,12 +278,15 @@ class BankNiftyStore:
     def record_broker_alert_delivery(self, now, kind, status):
         if kind not in {"failure", "recovery"}:
             raise ValueError("Unknown broker readiness alert kind")
+        statement = (
+            "UPDATE banknifty_broker_readiness SET failure_alert_status=%s,"
+            "failure_alert_attempts=failure_alert_attempts+1 WHERE trading_date=%s"
+            if kind == "failure"
+            else "UPDATE banknifty_broker_readiness SET recovery_alert_status=%s,"
+            "recovery_alert_attempts=recovery_alert_attempts+1 WHERE trading_date=%s"
+        )
         with self.locked() as connection:
-            connection.execute(
-                f"UPDATE banknifty_broker_readiness SET {kind}_alert_status=%s,"
-                f"{kind}_alert_attempts={kind}_alert_attempts+1 WHERE trading_date=%s",
-                (status, now.astimezone(IST).date()),
-            )
+            connection.execute(statement, (status, now.astimezone(IST).date()))
 
     def halted(self, connection):
         connection.execute("LOCK TABLE system_halts IN SHARE MODE")
