@@ -249,6 +249,7 @@ def test_market_fetches_full_context_and_reuses_daily_cache(monkeypatch):
     class Broker:
         def __init__(self):
             self.requests = []
+            self.chain_requests = []
 
         def banknifty_candles(self, start, end):
             self.requests.append((start, end))
@@ -269,12 +270,23 @@ def test_market_fetches_full_context_and_reuses_daily_cache(monkeypatch):
                 "last_trade_time": int((NOW + timedelta(seconds=1)).timestamp() * 1000),
             }
 
+        def option_chain(self, underlying, expiry_date, exchange):
+            self.chain_requests.append((underlying, expiry_date, exchange))
+            return {"strikes": {"55000": {"CE": {
+                "trading_symbol": "BANKNIFTY26SEP55000CE", "open_interest": 1200, "volume": 300,
+                "greeks": {"iv": 18.5, "delta": .52, "gamma": .001, "theta": -10, "vega": 7.5},
+            }}}}
+
     csv = "exchange,segment,underlying_symbol,instrument_type,expiry_date,buy_allowed,sell_allowed,is_reserved,lot_size,freeze_quantity,trading_symbol,strike_price,tick_size\nNSE,FNO,BANKNIFTY,CE,2026-09-29,1,1,0,30,601,BANKNIFTY26SEP55000CE,55000,.05\n"
     monkeypatch.setattr("kiwit.options_market.urllib.request.urlopen", lambda *a, **k: io.BytesIO(csv.encode()))
     broker = Broker()
     market = BankNiftyMarket(broker, clock=lambda: NOW + timedelta(seconds=2))
     first = market.snapshot(NOW)
     assert first["chart_analysis"]["ready"] and len(first["candidates"]) == 1
+    assert broker.chain_requests == [("BANKNIFTY", "2026-09-29", "NSE")]
+    assert first["candidates"][0]["quote"]["market_fields"]["delta"] == "0.52"
+    assert first["option_feature_coverage"]["fields"]["delta"]["coverage"] == "full"
+    assert first["option_feature_coverage"]["source"]["status"] == "available"
     assert len(broker.requests) == 2
     second = market.snapshot(NOW, cached_context=first["chart_cache"])
     assert len(broker.requests) == 3 and second["chart_analysis"] == first["chart_analysis"]

@@ -130,3 +130,35 @@ then checks entry authority, fill prices, sizing, stops/targets and partial-exit
 It cannot reconstruct external halt/consent history or authenticate an operator's settlement source.
 It reports old unbound calls explicitly and never invents historical AI choices or
 option P&L. This is reproducibility/parity evidence, not an out-of-sample backtest.
+
+## Groww IV and Greeks coverage (KIW-44)
+
+Groww's official live quote response documents implied volatility, open interest,
+and volume. Its official option-chain response additionally documents provider
+values for delta, gamma, theta, vega, rho, and IV for each CE and PE contract.
+KiwiT therefore fetches the option chain once for the selected expiry and joins
+the returned fields to executable per-contract quotes by trading symbol. It never
+derives, estimates, or fills a missing volatility value.
+
+Each accepted value records its provider, endpoint, observation time, and timestamp
+basis. The option-chain schema does not document an exchange timestamp, so KiwiT
+records the client receipt time explicitly and rejects data more than 30 seconds
+old or future-dated. It rejects non-finite values, IV outside `(0, 500]`, delta
+outside `[-1, 1]`, negative gamma or vega, and negative or fractional volume and
+open interest. Theta may be positive or negative but must be finite.
+
+`option_feature_coverage` reports `full`, `partial`, or `unavailable` for every
+field, including the field's observed sources and latest observation time. The
+complete coverage object remains in `banknifty_market_history` and appears as a
+top-level section in the reproducible options evidence export.
+
+Current live playbooks use prices and liquidity and declare no required volatility
+fields. A future volatility-dependent playbook must declare `required_option_fields`.
+The selector then skips any contract missing one of those fields with
+`OPTION_FEATURES_UNAVAILABLE`; price-only rules remain eligible. This is the
+explicit fallback when the provider endpoint is unavailable or coverage is partial.
+
+Provider references:
+
+- [Groww live data API](https://groww.in/trade-api/docs/curl/live-data)
+- [Groww API changelog](https://groww.in/trade-api/docs/curl/changelog)
