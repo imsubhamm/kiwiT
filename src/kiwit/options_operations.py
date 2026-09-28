@@ -146,8 +146,9 @@ def diagnostics(store, now):
             (day, now),
         ).fetchone()[0]
         incidents = connection.execute(
-            "SELECT observed_at,status,reason_code,detail FROM banknifty_worker_incidents "
-            "WHERE trading_date=%s ORDER BY observed_at DESC LIMIT 10", (day,),
+            "SELECT first_seen_at,last_seen_at,status,reason_code,occurrence_count,recovered_at,active,"
+            "latest_detail,recovery_detail,closure_reason FROM banknifty_worker_incidents "
+            "WHERE trading_date=%s ORDER BY COALESCE(closed_at,last_seen_at) DESC LIMIT 10", (day,),
         ).fetchall()
         scans = connection.execute(
             "SELECT event_at,detail->'entry_gate'->'reason_codes' FROM banknifty_events "
@@ -232,8 +233,13 @@ def diagnostics(store, now):
             "recovery_trades": outcome[0], "recovery_pnl": str(outcome[1]),
             "tracked_contracts": tracked,
             "recent_worker_incidents": [
-                {"at": at.isoformat(), "status": status, "reason_code": code, "detail": detail}
-                for at, status, code, detail in incidents
+                {"at": last.isoformat(), "first_seen_at": first.isoformat(),
+                 "last_seen_at": last.isoformat(), "status": status,
+                 "reason_code": code, "occurrence_count": count,
+                 "recovered_at": recovered.isoformat() if recovered else None, "active": active,
+                 "detail": detail, "recovery_detail": recovery_detail, "closure_reason": closure_reason}
+                for first, last, status, code, count, recovered, active, detail, recovery_detail,
+                closure_reason in incidents
             ],
             "funnel": dict(counts), "rejection_counts": [
                 {"playbook_id": p, "reason": r, "count": n} for p,r,n in reasons]}

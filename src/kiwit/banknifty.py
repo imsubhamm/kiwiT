@@ -10,6 +10,7 @@ import hashlib
 import itertools
 import json
 import os
+import re
 from contextlib import contextmanager
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal as D
@@ -49,6 +50,12 @@ from .playbooks import VERSION as SELECTOR_VERSION
 from .playbooks import catalogue, select_plans, underlying_exit, validate_plan
 
 DESK = "kiwit-banknifty-paper"
+
+
+def normalize_incident_reason(value):
+    """Create a stable incident identity without discarding the provider evidence detail."""
+    normalized = re.sub(r"[^A-Z0-9]+", "_", str(value or "").strip().upper()).strip("_")
+    return (normalized or "UNKNOWN_REASON")[:120]
 
 
 def market_failure_evidence(error, operation="snapshot"):
@@ -223,15 +230,45 @@ class BankNiftyStore:
             "ORDER BY last_selected_at DESC LIMIT 64", (day, now)).fetchall()]
 
     def worker_incident(self, worker, now, status, evidence):
+        if status not in {"failed", "recovered"}:
+            raise ValueError(f"invalid worker incident status: {status}")
+        reason_code = normalize_incident_reason(evidence.get("reason_code"))
+        detail = json.dumps(evidence, default=str)
+        day = now.astimezone(IST).date()
         with self.locked() as connection:
-            previous = connection.execute(
-                "SELECT status FROM banknifty_worker_health WHERE worker=%s", (worker,)).fetchone()
-            if status == "failed" or (status == "recovered" and previous and previous[0] == "failed"):
+            connection.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"worker-incident:{worker}",))
+            active = connection.execute(
+                "SELECT incident_id,reason_code FROM banknifty_worker_incidents "
+                "WHERE worker=%s AND active FOR UPDATE", (worker,),
+            ).fetchone()
+            if status == "failed":
+                if active and active[1] == reason_code:
+                    connection.execute(
+                        "UPDATE banknifty_worker_incidents SET trading_date=%s,observed_at=%s,last_seen_at=%s,"
+                        "occurrence_count=occurrence_count+1,latest_detail=%s::jsonb "
+                        "WHERE incident_id=%s",
+                        (day, now, now, detail, active[0]),
+                    )
+                    return
+                if active:
+                    connection.execute(
+                        "UPDATE banknifty_worker_incidents SET active=false,closed_at=%s,"
+                        "closure_reason='reason_changed' WHERE incident_id=%s",
+                        (now, active[0]),
+                    )
                 connection.execute(
-                    "INSERT INTO banknifty_worker_incidents(trading_date,worker,observed_at,status,reason_code,detail) "
-                    "VALUES(%s,%s,%s,%s,%s,%s::jsonb)",
-                    (now.astimezone(IST).date(), worker, now, status, evidence["reason_code"],
-                     json.dumps(evidence, default=str)),
+                    "INSERT INTO banknifty_worker_incidents("
+                    "trading_date,worker,observed_at,status,reason_code,detail,first_seen_at,last_seen_at,"
+                    "occurrence_count,active,latest_detail) "
+                    "VALUES(%s,%s,%s,'failed',%s,%s::jsonb,%s,%s,1,true,%s::jsonb)",
+                    (day, worker, now, reason_code, detail, now, now, detail),
+                )
+            elif status == "recovered" and active:
+                connection.execute(
+                    "UPDATE banknifty_worker_incidents SET active=false,status='recovered',observed_at=%s,"
+                    "recovered_at=%s,closed_at=%s,closure_reason='recovered',recovery_reason_code=%s,"
+                    "recovery_detail=%s::jsonb WHERE incident_id=%s",
+                    (now, now, now, reason_code, detail, active[0]),
                 )
 
     def record_broker_readiness(self, now, status, evidence):

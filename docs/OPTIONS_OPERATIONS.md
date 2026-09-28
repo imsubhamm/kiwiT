@@ -162,3 +162,18 @@ Provider references:
 
 - [Groww live data API](https://groww.in/trade-api/docs/curl/live-data)
 - [Groww API changelog](https://groww.in/trade-api/docs/curl/changelog)
+
+## Worker incident lifecycles (KIW-45)
+
+Worker incidents use the worker name and a normalized reason code as their active
+identity. Repeated identical failures update one lifecycle's last-seen time,
+occurrence count, and latest evidence while preserving its first-seen time and
+initial detail. A changed reason closes the previous lifecycle as
+`reason_changed` and starts a separate incident. Recovery closes the active
+lifecycle once, records its recovery time and evidence, and repeated recovery
+signals are ignored. If the same failure later recurs, it creates a new lifecycle.
+
+The migration preserves legacy rows as closed historical evidence. New active
+lifecycles are unique per worker, preventing concurrent pollers from creating
+duplicate incidents. Operations diagnostics and evidence exports expose the full
+lifecycle fields for audit and alerting.

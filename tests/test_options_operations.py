@@ -12,11 +12,12 @@ from test_banknifty import NOW, Analyst, BankNiftyService, Mailer, Market, db, d
 from test_chart_analysis import NOW as CHART_NOW
 from test_chart_analysis import payload, rows
 
+from kiwit.banknifty import normalize_incident_reason
 from kiwit.chart_analysis import history_context
 from kiwit.intraday import IST, SignalMailer
 from kiwit.options_ai import AIFailure, OpenAIPaperAnalyst
 from kiwit.options_calendar import regular_session
-from kiwit.options_operations import decision_reason_codes, strategy_readiness
+from kiwit.options_operations import decision_reason_codes, diagnostics, strategy_readiness
 
 
 def test_decision_reason_codes_grace_and_fail_closed_heartbeat():
@@ -71,6 +72,66 @@ def test_strategy_readiness_distinguishes_no_setup_from_configuration_blocker():
     )
     assert cleared["status"] == "ready"
     assert cleared["duration_seconds"] == 0
+
+
+def test_incident_reason_normalization_is_stable_and_bounded():
+    assert normalize_incident_reason(" groww provider-error ") == "GROWW_PROVIDER_ERROR"
+    assert normalize_incident_reason(None) == "UNKNOWN_REASON"
+    assert len(normalize_incident_reason("x" * 200)) == 120
+
+
+def test_worker_incident_rejects_unknown_status(db):
+    service = BankNiftyService(db, None, market=Market(), analyst=Analyst(), clock=lambda: NOW)
+    with pytest.raises(ValueError, match="invalid worker incident status"):
+        service.store.worker_incident("observer", NOW, "unknown", {"reason_code": "failure"})
+
+
+def test_worker_incident_lifecycle_deduplicates_changes_recovers_and_recurs(db):
+    service = BankNiftyService(db, None, market=Market(), analyst=Analyst(), clock=lambda: NOW)
+    first = NOW
+    service.store.worker_incident("observer", first, "failed", {
+        "reason_code": "groww provider-error", "safe_message": "first failure",
+    })
+    service.store.worker_incident("observer", first + timedelta(minutes=1), "failed", {
+        "reason_code": "GROWW_PROVIDER_ERROR", "safe_message": "same failure",
+    })
+    changed = first + timedelta(minutes=2)
+    service.store.worker_incident("observer", changed, "failed", {
+        "reason_code": "MARKET_TRANSPORT_ERROR", "safe_message": "changed failure",
+    })
+    recovered = first + timedelta(minutes=3)
+    recovery = {"reason_code": "MARKET_SNAPSHOT_RECOVERED", "spot_at": recovered.isoformat()}
+    service.store.worker_incident("observer", recovered, "recovered", recovery)
+    service.store.worker_incident("observer", recovered + timedelta(seconds=10), "recovered", recovery)
+    recurrence = first + timedelta(minutes=4)
+    service.store.worker_incident("observer", recurrence, "failed", {
+        "reason_code": "market transport error", "safe_message": "failure recurred",
+    })
+
+    with service.store.locked() as connection:
+        rows = connection.execute(
+            "SELECT status,reason_code,first_seen_at,last_seen_at,occurrence_count,recovered_at,active,"
+            "closure_reason,detail,latest_detail,recovery_detail FROM banknifty_worker_incidents "
+            "WHERE worker='observer' ORDER BY incident_id"
+        ).fetchall()
+    assert len(rows) == 3
+    assert rows[0][:8] == (
+        "failed", "GROWW_PROVIDER_ERROR", first, first + timedelta(minutes=1), 2, None, False,
+        "reason_changed",
+    )
+    assert rows[0][8]["safe_message"] == "first failure"
+    assert rows[0][9]["safe_message"] == "same failure"
+    assert rows[1][:8] == (
+        "recovered", "MARKET_TRANSPORT_ERROR", changed, changed, 1, recovered, False, "recovered",
+    )
+    assert rows[1][10] == recovery
+    assert rows[2][:8] == (
+        "failed", "MARKET_TRANSPORT_ERROR", recurrence, recurrence, 1, None, True, None,
+    )
+    recent = diagnostics(service.store, recurrence)["recent_worker_incidents"]
+    assert recent[0]["reason_code"] == "MARKET_TRANSPORT_ERROR"
+    assert recent[0]["occurrence_count"] == 1
+    assert recent[0]["active"] is True
 
 
 def test_ai_failure_mail_includes_safe_category():
