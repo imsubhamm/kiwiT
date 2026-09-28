@@ -364,7 +364,7 @@ def select_plans(snapshot, state, now):
     return selection
 
 
-def validate_plan(decision, snapshot, state, quote, underlying, now):
+def validate_plan(decision, snapshot, state, quote, underlying, now, *, execution_event_context=None):
     selection = snapshot.get("strategy_selection") or {}
     plan = next((p for p in selection.get("plans", []) if p["id"] == decision.get("plan_id")), None)
     if not plan or selection.get("version") != VERSION:
@@ -383,6 +383,9 @@ def validate_plan(decision, snapshot, state, quote, underlying, now):
     events = snapshot.get("event_context") or {}
     if events.get("coverage") != "configured" or events.get("risk") != "clear":
         raise ValueError("Verified clear event calendar required for entry")
+    execution_events = execution_event_context if execution_event_context is not None else events
+    if execution_events.get("coverage") != "configured" or execution_events.get("risk") != "clear":
+        raise ValueError("Current clear event calendar required for entry")
     if not age_ok(underlying.get("at"), now, 180) or datetime.fromisoformat(underlying["at"]) < datetime.fromisoformat(
         snapshot["spot_at"]
     ):

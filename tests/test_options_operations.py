@@ -307,6 +307,59 @@ def test_calendar_block_keeps_shadow_evidence_without_ai_or_execution(desk, monk
     assert 'HIGH_IMPACT_EVENT_WINDOW' in scan['entry_gate']['reason_codes']
 
 
+@pytest.mark.parametrize(("execution_context", "reason_code", "detail_code"), [
+    ({'version': 'event-calendar-v2', 'coverage': 'configured', 'risk': 'high', 'events': []},
+     'HIGH_IMPACT_EVENT_WINDOW', 'HIGH_IMPACT_EVENT_WINDOW'),
+    ({'version': 'event-calendar-v2', 'coverage': 'invalid', 'risk': 'unknown', 'events': [],
+      'reason_code': 'CALENDAR_STALE'}, 'EVENT_CALENDAR_INVALID', 'CALENDAR_STALE'),
+])
+def test_execution_calendar_recheck_rejects_changed_authority(
+    desk, monkeypatch, execution_context, reason_code, detail_code,
+):
+    clear = {'version': 'event-calendar-v2', 'coverage': 'configured', 'risk': 'clear', 'events': []}
+    checks = []
+
+    def changing_calendar(now):
+        checks.append(now)
+        return clear if len(checks) <= 5 else execution_context
+
+    monkeypatch.setattr('kiwit.banknifty.event_context', changing_calendar)
+    service, _market, analyst, _clock = desk
+    state = warm(desk)
+    assert analyst.calls == 1
+    assert state['position'] is None and state['entries'] == 0
+    with service.store.locked() as connection:
+        call = connection.execute(
+            "SELECT state,result FROM banknifty_ai_calls ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        blocked = connection.execute(
+            "SELECT detail FROM banknifty_events WHERE kind='blocked' ORDER BY event_id DESC LIMIT 1"
+        ).fetchone()[0]
+    assert call[0] == 'rejected'
+    authority = call[1]['execution_authority']
+    assert authority['decision']['risk'] == 'clear'
+    assert authority['execution'] == execution_context
+    assert authority['allowed'] is False
+    assert authority['blocker'] == {'reason_code': reason_code, 'detail_code': detail_code}
+    assert blocked['reason_code'] == reason_code
+    assert blocked['calendar_authority'] == authority
+
+
+def test_successful_entry_persists_decision_and_execution_calendar_authority(desk):
+    service, _market, _analyst, _clock = desk
+    state = warm(desk)
+    assert state['position']['calendar_authority']['allowed'] is True
+    with service.store.locked() as connection:
+        entry = connection.execute(
+            "SELECT detail FROM banknifty_events WHERE kind='paper_entry' ORDER BY event_id DESC LIMIT 1"
+        ).fetchone()[0]
+    authority = entry['calendar_authority']
+    assert authority['decision']['coverage'] == 'configured'
+    assert authority['execution']['coverage'] == 'configured'
+    assert authority['decision']['risk'] == authority['execution']['risk'] == 'clear'
+    assert authority['checked_at'] == state['position']['calendar_authority']['checked_at']
+
+
 def test_diagnostics_degrades_for_calendar_configuration_and_clears(desk, monkeypatch):
     unavailable = {
         'version': 'event-calendar-v2',

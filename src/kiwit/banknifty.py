@@ -32,7 +32,7 @@ from .options_ai import (
     provider_ready,
 )
 from .options_calendar import regular_session
-from .options_events import event_context
+from .options_events import entry_calendar_blocker, event_context
 from .options_market import BankNiftyMarket
 from .options_operations import diagnostics, heartbeat, report_backlog
 from .options_policy import ENTRY_CAP, decision_event, entry_blocker_detail, entry_gate
@@ -50,6 +50,18 @@ from .playbooks import VERSION as SELECTOR_VERSION
 from .playbooks import catalogue, select_plans, underlying_exit, validate_plan
 
 DESK = "kiwit-banknifty-paper"
+
+
+class EntryCalendarAuthorityError(ValueError):
+    """A final entry-calendar rejection with safe, persistable evidence."""
+
+    def __init__(self, evidence):
+        self.evidence = evidence
+        blocker = evidence["blocker"]
+        super().__init__(
+            "Entry calendar authority blocked paper entry "
+            f"[{blocker['reason_code']}:{blocker['detail_code']}]"
+        )
 
 
 def normalize_incident_reason(value):
@@ -961,7 +973,26 @@ class BankNiftyService:
                 evidence = entry_evidence(snapshot.get("chart_analysis"), selected["kind"], decision["strategy"], now)
                 if not evidence:
                     raise ValueError("No fresh matching chart setup; paper entry blocked")
-                plan = validate_plan(decision, snapshot, state, quote, underlying, now)
+                execution_event_context = event_context(now)
+                calendar_authority = {
+                    "checked_at": now.isoformat(),
+                    "decision": snapshot.get("event_context") or {},
+                    "execution": execution_event_context,
+                }
+                blocker = entry_calendar_blocker(execution_event_context)
+                if blocker:
+                    calendar_authority.update(allowed=False, blocker=blocker)
+                    raise EntryCalendarAuthorityError(calendar_authority)
+                calendar_authority["allowed"] = True
+                plan = validate_plan(
+                    decision,
+                    snapshot,
+                    state,
+                    quote,
+                    underlying,
+                    now,
+                    execution_event_context=execution_event_context,
+                )
                 qty = plan["quantity"]
                 fill = fill_price(quote, selected, True)
                 exits = exit_levels(state, plan["live_exit"], fill, qty, selected)
@@ -986,6 +1017,7 @@ class BankNiftyService:
                     "cost_aware_exit": {key: str(value) if isinstance(value, D) else value
                                         for key, value in exits.items()},
                     "cost_model": BROKER_COST_VERSION,
+                    "calendar_authority": calendar_authority,
                 }
                 state["entries"] += 1
                 self.store.track_plans(connection, state, [plan], snapshot["candidates"], now,
@@ -1000,6 +1032,7 @@ class BankNiftyService:
                         "quote": quote,
                         "strategy": decision["strategy"],
                         "chart_evidence": evidence,
+                        "calendar_authority": calendar_authority,
                         "entry_costs": {k: str(v) if isinstance(v, D) else v
                                         for k, v in cost_breakdown(fill * qty, "buy").items()},
                     },
@@ -1288,19 +1321,23 @@ class BankNiftyService:
                 current = self.store.latest(connection)
                 detail = str(error) if isinstance(error, (ValueError, AIFailure)) else "Market data or AI unavailable"
                 if call_id:
+                    authority = getattr(error, "evidence", None) if isinstance(error, EntryCalendarAuthorityError) else None
                     connection.execute(
                         "UPDATE banknifty_ai_calls SET state='rejected', "
-                        "result=jsonb_set(result,'{validation_error}',%s::jsonb) "
+                        "result=jsonb_set(jsonb_set(result,'{validation_error}',%s::jsonb),"
+                        "'{execution_authority}',%s::jsonb) "
                         "WHERE call_id=%s AND state='completed'",
-                        (json.dumps(detail), call_id),
+                        (json.dumps(detail), json.dumps(authority), call_id),
                     )
                 # Never log provider errors/bodies containing authorization material.
                 if current and current["state"] == "running":
                     current["detail"] = detail
                     self.store.save(connection, current)
-                    self.store.event(
-                        connection, current, "blocked", {"reason": detail, "call_id": str(call_id) if call_id else None}
-                    )
+                    blocked = {"reason": detail, "call_id": str(call_id) if call_id else None}
+                    if isinstance(error, EntryCalendarAuthorityError):
+                        blocked.update(reason_code=error.evidence["blocker"]["reason_code"],
+                                       calendar_authority=error.evidence)
+                    self.store.event(connection, current, "blocked", blocked)
             if is_ai_failure:
                 category = (getattr(error, "evidence", None) or {}).get("category") or "unspecified"
                 delivery, _delivery_error = self.mailer.send_ai_failure(
