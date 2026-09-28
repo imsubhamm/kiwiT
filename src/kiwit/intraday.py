@@ -164,6 +164,45 @@ class SignalMailer:
                             + "\n\nReview: " + dashboard_url + "\nPaper-only; no live orders.")
         return self._send(message)
 
+    def send_broker_readiness(self, *, status: str, occurred_at: datetime, reason_code: str,
+                              first_failed_at: datetime | None, failure_count: int,
+                              recovered_at: datetime | None, dashboard_url: str) -> tuple[str, str]:
+        """Notify once when pre-market broker readiness fails and once when it recovers."""
+        if not self.configured:
+            return "not_configured", "SMTP environment variables are not configured"
+        if status not in {"failed", "recovered"}:
+            raise ValueError("Unknown broker readiness status")
+        safe_code = reason_code if re.fullmatch(r"[A-Z0-9_]{1,64}", str(reason_code or "")) else "GROWW_READINESS_FAILED"
+        message = EmailMessage()
+        message["Subject"] = (
+            "NitiQuant alert: Groww session approval required"
+            if status == "failed"
+            else "NitiQuant recovery: Groww approval and quote ready"
+        )
+        message["From"] = self.sender
+        message["To"] = ", ".join(self.recipients)
+        if status == "failed":
+            body = (
+                "The pre-market read-only Groww readiness check failed. Observation has not started.\n\n"
+                f"Time: {occurred_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                f"Reason: {safe_code}\n"
+                f"First failure: {(first_failed_at or occurred_at).astimezone(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                f"Occurrences: {failure_count}\n\n"
+                "Open Groww and approve today’s API session, then wait for the recovery confirmation.\n"
+            )
+        else:
+            body = (
+                "Groww session approval and read-only quote retrieval recovered.\n\n"
+                f"Recovered: {(recovered_at or occurred_at).astimezone(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                f"First failure: {(first_failed_at or occurred_at).astimezone(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                f"Recorded failed checks: {failure_count}\n\n"
+            )
+        message.set_content(
+            body + f"Review: {dashboard_url}#banknifty\n\n"
+            "This check uses read-only profile and quote endpoints. No broker order was placed."
+        )
+        return self._send(message)
+
     def send_daily_report(self, report: dict[str, Any], dashboard_url: str) -> tuple[str, str]:
         """Deliver a deterministic paper-session report without exposing credentials."""
         if not self.configured:

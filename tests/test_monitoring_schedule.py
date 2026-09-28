@@ -31,6 +31,7 @@ def test_database_wake_windows(stamp, active, due):
 
 @pytest.mark.parametrize('script,mode', [
     ('run_intraday_worker', None), ('run_banknifty_worker', 'decision'),
+    ('run_banknifty_worker', 'readiness'),
     ('run_banknifty_worker', 'observe'), ('run_banknifty_worker', 'supervise'),
     ('run_banknifty_worker', 'reports'),
 ])
@@ -78,3 +79,11 @@ def test_market_hourly_and_manual_runs_still_reach_database(monkeypatch, args, s
     monkeypatch.setattr('sys.argv', ['worker', *args])
     with pytest.raises(RuntimeError, match='database reached'):
         module.main()
+
+
+def test_groww_readiness_timer_runs_before_observation():
+    readiness = Path('deploy/kiwit-banknifty-readiness.timer').read_text()
+    observer = Path('deploy/kiwit-banknifty-observer.timer').read_text()
+    assert '09:00..19:00 Asia/Kolkata' in readiness
+    assert '09:20..59:00 Asia/Kolkata' in observer
+    assert '--mode readiness --scheduled' in Path('deploy/kiwit-banknifty-readiness.service').read_text()

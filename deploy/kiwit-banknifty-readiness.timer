@@ -1,0 +1,11 @@
+[Unit]
+Description=Groww pre-market readiness check
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:00..19:00 Asia/Kolkata
+Persistent=false
+AccuracySec=1s
+Unit=kiwit-banknifty-readiness.service
+
+[Install]
+WantedBy=timers.target

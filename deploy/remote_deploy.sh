@@ -13,7 +13,7 @@ release_dir="$release_root/$release_id"
 previous_release=$(readlink -f /opt/kiwit/current 2>/dev/null || true)
 activated=false
 drained=false
-units=(kiwit-watchdog kiwit-intraday kiwit-banknifty kiwit-banknifty-supervisor kiwit-banknifty-observer kiwit-banknifty-reports)
+units=(kiwit-watchdog kiwit-intraday kiwit-banknifty kiwit-banknifty-readiness kiwit-banknifty-supervisor kiwit-banknifty-observer kiwit-banknifty-reports)
 
 if [[ $EUID -ne 0 ]]; then
   echo "remote_deploy.sh must run through sudo" >&2
@@ -147,7 +147,7 @@ install -m 0644 "$release_dir/deploy/kiwit-banknifty.timer" /etc/systemd/system/
 chmod 0755 "$release_dir/scripts/health_watchdog.sh"
 chmod 0755 "$release_dir/scripts/run_intraday_worker.py"
 systemctl daemon-reload
-for worker in supervisor observer reports; do
+for worker in readiness supervisor observer reports; do
   install -m 0644 "$release_dir/deploy/kiwit-banknifty-$worker.service" "/etc/systemd/system/kiwit-banknifty-$worker.service"
   install -m 0644 "$release_dir/deploy/kiwit-banknifty-$worker.timer" "/etc/systemd/system/kiwit-banknifty-$worker.timer"
 done
@@ -172,7 +172,7 @@ for attempt in {1..10}; do
 done
 systemctl enable --now kiwit-banknifty.timer
 systemctl enable --now kiwit-watchdog.timer kiwit-intraday.timer
-for worker in supervisor observer reports; do
+for worker in readiness supervisor observer reports; do
   systemctl enable --now "kiwit-banknifty-$worker.timer"
 done
 trap - ERR
