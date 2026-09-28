@@ -40,6 +40,16 @@ for unit in "${units[@]}"; do
   systemctl is-active "$unit.timer" > "$backup_dir/$unit.active" 2>/dev/null || true
 done
 
+record_deployment() {
+  local outcome=$1
+  local elapsed=0
+  if [[ -n ${gap_started:-} ]]; then elapsed=$(( $(date +%s) - gap_started )); fi
+  # Upper bound includes barrier acquisition/drain, not just timer downtime.
+  printf 'outcome=%s requested_sha=%s previous_release=%s previous_sha=%s current_release=%s current_sha=%s supervision_gap_upper_bound_seconds=%s\n' \
+    "$outcome" "$release_sha" "$previous_release" "$(cat "$previous_release/RELEASE_SHA" 2>/dev/null || echo unknown)" "$(readlink -f /opt/kiwit/current)" "$(cat /opt/kiwit/current/RELEASE_SHA 2>/dev/null || echo unknown)" "$elapsed" \
+    >> /opt/kiwit/deployment-history.log
+}
+
 rollback() {
   exit_code=$?
   if [[ $activated == true && $drained == false ]]; then
@@ -51,6 +61,13 @@ rollback() {
   fi
   if [[ $activated == true && -n $previous_release && -d $previous_release ]]; then
     echo "readiness failed; rolling back to $previous_release" >&2
+    # Timers may have partially restarted. Reapply the same flat-only barrier
+    # before rollback; never terminate supervision of a newly opened position.
+    if ! "$release_dir/.venv/bin/python" "$release_dir/scripts/quiesce_deployment.py" "${units[@]}"; then
+      record_deployment rollback_deferred
+      echo "rollback deferred; current release retained, operator action required" >&2
+      exit "$exit_code"
+    fi
     # Stop every new-generation worker before restoring the old code or environment.
     for unit in "${units[@]}"; do
       systemctl disable --now "$unit.timer" 2>/dev/null || true
@@ -73,6 +90,9 @@ rollback() {
       done
     done
     systemctl daemon-reload
+    if [[ $(cat "$backup_dir/kiwit-banknifty-supervisor.active") == active ]]; then
+      systemctl start kiwit-banknifty-supervisor.timer
+    fi
     systemctl restart kiwit-api
     systemctl reload nginx
     for unit in "${units[@]}"; do
@@ -80,6 +100,7 @@ rollback() {
       if [[ $(cat "$backup_dir/$unit.active") == active ]]; then systemctl start "$unit.timer"; fi
     done
   fi
+  if [[ $activated == true ]]; then record_deployment rolled_back; else record_deployment preparation_failed; fi
   exit "$exit_code"
 }
 trap rollback ERR
@@ -92,29 +113,22 @@ runuser -u kiwit -- "$release_dir/.venv/bin/python" -m pip install --disable-pip
 printf '%s\n' "$release_sha" > "$release_dir/RELEASE_SHA"
 chown kiwit:kiwit "$release_dir/RELEASE_SHA"
 
-# Pause scheduling, then let in-flight one-shot workers finish before schema/code changes.
-activated=true
-for unit in "${units[@]}"; do systemctl stop "$unit.timer" 2>/dev/null || true; done
-for attempt in {1..120}; do
-  busy=false
-  for unit in "${units[@]}"; do
-    state=$(systemctl show "$unit.service" -p ActiveState --value 2>/dev/null || true)
-    if [[ $state == active || $state == activating || $state == deactivating ]]; then busy=true; fi
-  done
-  if [[ $busy == false ]]; then break; fi
-  if [[ $attempt -eq 120 ]]; then echo "workers failed to drain; deployment aborted" >&2; false; fi
-  sleep 1
-done
-drained=true
-systemctl stop kiwit-api
-
+# Load the application URL before the gate; migration credentials remain root-only.
 set -a
 source /etc/kiwit/kiwit.env
-# This root-only file is never loaded by application services.
 if [[ -f /etc/kiwit/migration.env ]]; then
   source /etc/kiwit/migration.env
 fi
 set +a
+# The gate owns position-table locks until every local producer has stopped.
+# A failure restores scheduling itself; activation/migrations have not begun.
+gap_started=$(date +%s)
+if ! "$release_dir/.venv/bin/python" "$release_dir/scripts/quiesce_deployment.py" "${units[@]}"; then
+  record_deployment deferred
+  exit 75
+fi
+activated=true
+drained=true
 calendar_path=${KIWIT_OPTIONS_EVENT_CALENDAR:-}
 if [[ -z $calendar_path ]]; then
   echo "::warning title=Options calendar unavailable::KIWIT_OPTIONS_EVENT_CALENDAR is not configured; entries remain fail-closed" >&2
@@ -158,6 +172,8 @@ activated=true
 # The server environment may carry a previous release SHA; use the archived identity.
 sed -i "/^KIWIT_RELEASE_SHA=/d" /etc/kiwit/kiwit.env
 printf 'KIWIT_RELEASE_SHA=%s\n' "$release_sha" >> /etc/kiwit/kiwit.env
+# The API exposes entry actions, so supervision must already be scheduled.
+systemctl start kiwit-banknifty-supervisor.timer
 systemctl restart kiwit-api
 systemctl reload nginx
 for attempt in {1..10}; do
@@ -170,11 +186,14 @@ for attempt in {1..10}; do
   fi
   sleep 2
 done
-systemctl enable --now kiwit-banknifty.timer
-systemctl enable --now kiwit-watchdog.timer kiwit-intraday.timer
-for worker in readiness supervisor observer reports; do
+# Restore exit supervision before any entry-capable scheduler.
+systemctl enable --now kiwit-banknifty-supervisor.timer
+for worker in readiness observer reports; do
   systemctl enable --now "kiwit-banknifty-$worker.timer"
 done
+systemctl enable --now kiwit-watchdog.timer kiwit-intraday.timer
+systemctl enable --now kiwit-banknifty.timer
+record_deployment deployed
 trap - ERR
 find "$release_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf
 echo "deployed $release_id ($release_sha)"

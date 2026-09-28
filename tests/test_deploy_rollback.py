@@ -15,6 +15,8 @@ def test_rollback_stops_workers_before_switch_and_removes_new_units(tmp_path):
                         'kiwit-banknifty.service': '', 'kiwit-banknifty.timer': ''}.items():
         (backup / name).write_text(value)
     harness = '''
+record_deployment() { echo "audit $*"; }
+release_dir=$3
 systemctl() { echo "systemctl $*"; }
 ln() { echo "ln $*"; }
 install() { echo "install $*"; }
@@ -25,8 +27,12 @@ units=(kiwit-banknifty kiwit-banknifty-reports)
 previous_release=$1
 backup_dir=$2
 '''
+    python = tmp_path / '.venv' / 'bin' / 'python'
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/sh\nexit 0\n')
+    python.chmod(0o755)
     result = subprocess.run(['bash', '-c', harness + rollback + '\n(exit 7)\nrollback',
-                             'test', str(previous), str(backup)], capture_output=True, text=True, check=False)
+                             'test', str(previous), str(backup), str(tmp_path)], capture_output=True, text=True, check=False)
     assert result.returncode == 7
     commands = result.stdout
     assert commands.index('stop kiwit-banknifty-reports.service') < commands.index('ln -sfn')
@@ -54,3 +60,58 @@ def test_deployment_warns_without_blocking_release_when_options_calendar_is_unav
     assert '--path "$calendar_path"' in script
     calendar_block = script[script.index('calendar_path='):script.index('runuser -u kiwit -- env \\\n  HOME=')]
     assert '\n  false\n' not in calendar_block
+
+
+def test_supervision_starts_before_api_exposes_entry_actions():
+    script = Path('deploy/remote_deploy.sh').read_text()
+    main = script[script.index('trap rollback ERR'):]
+    assert main.index('systemctl start kiwit-banknifty-supervisor.timer') < main.index('systemctl restart kiwit-api')
+
+
+def test_open_position_during_rollback_retains_current_release(tmp_path):
+    script = Path('deploy/remote_deploy.sh').read_text()
+    rollback = script[script.index('rollback() {'):script.index('trap rollback ERR')]
+    previous = tmp_path / 'previous'
+    previous.mkdir()
+    python = tmp_path / '.venv' / 'bin' / 'python'
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/sh\nexit 75\n')
+    python.chmod(0o755)
+    harness = '''
+record_deployment() { echo "audit $*"; }
+systemctl() { echo "systemctl $*"; }
+ln() { echo "ln $*"; }
+activated=true
+drained=true
+units=(kiwit-banknifty kiwit-banknifty-supervisor)
+previous_release=$1
+release_dir=$2
+'''
+    result = subprocess.run(['bash', '-c', harness + rollback + '\n(exit 7)\nrollback',
+                             'test', str(previous), str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode == 7
+    assert 'audit rollback_deferred' in result.stdout
+    assert 'systemctl' not in result.stdout
+    assert 'ln -sfn' not in result.stdout
+
+
+def test_open_position_defers_before_any_migration_or_activation(tmp_path):
+    script = Path('deploy/remote_deploy.sh').read_text()
+    gate = script[script.index('gap_started='):script.index('calendar_path=')]
+    python = tmp_path / '.venv' / 'bin' / 'python'
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/sh\nexit 75\n')
+    python.chmod(0o755)
+    harness = '''
+release_dir=$1
+units=(kiwit-banknifty kiwit-banknifty-supervisor)
+activated=false
+drained=false
+record_deployment() { echo "audit $*"; }
+'''
+    result = subprocess.run(['bash', '-c', harness + gate + '\necho MIGRATION\necho ACTIVATION',
+                             'test', str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode == 75
+    assert 'audit deferred' in result.stdout
+    assert 'MIGRATION' not in result.stdout
+    assert 'ACTIVATION' not in result.stdout
