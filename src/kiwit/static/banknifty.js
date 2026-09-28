@@ -94,8 +94,10 @@
       setMetric('bn-data-card', !s?.position ? 'No open position' : s.valuation_fresh === true ? 'Fresh at last sync' : 'Stale / unconfirmed');
       const readiness = el('bn-readiness');
       const nextAction = el('bn-next-action');
-      if (readiness) readiness.textContent = !data.available ? 'Bank Nifty unavailable' : s?.state === 'stopping' ? 'Needs attention · session awaiting closure' : s?.state === 'running' ? 'Paper session running' : 'Bank Nifty connected · paper only';
-      if (nextAction) nextAction.textContent = !data.available ? 'The desk is unavailable. Check service configuration and sync again.' : s?.state === 'stopping' ? 'A previous session must finish before another Run. ' + (s.detail || 'Waiting for position reconciliation.') : s?.state === 'running' ? 'Monitor your position below. Stop & exit requests closure when an executable quote is available.' : 'Review the session details and limits below. The server checks trading eligibility when you request Run.';
+      const brokerReadiness = data.operations?.broker_readiness;
+      const brokerBlocked = brokerReadiness?.status === 'failed';
+      if (readiness) readiness.textContent = brokerBlocked ? (brokerReadiness.message || 'Groww session approval required') : !data.available ? 'Bank Nifty unavailable' : s?.state === 'stopping' ? 'Needs attention · session awaiting closure' : s?.state === 'running' ? 'Paper session running' : brokerReadiness?.status === 'ready' ? 'Groww approval and quote ready · paper only' : 'Bank Nifty connected · paper only';
+      if (nextAction) nextAction.textContent = brokerBlocked ? `Open Groww and approve today’s API session. First failure ${brokerReadiness.first_failed_at || 'not recorded'} · ${brokerReadiness.failure_count || 0} failed check${brokerReadiness.failure_count === 1 ? '' : 's'}. This alert clears after a successful read-only quote.` : !data.available ? 'The desk is unavailable. Check service configuration and sync again.' : s?.state === 'stopping' ? 'A previous session must finish before another Run. ' + (s.detail || 'Waiting for position reconciliation.') : s?.state === 'running' ? 'Monitor your position below. Stop & exit requests closure when an executable quote is available.' : 'Review the session details and limits below. The server checks trading eligibility when you request Run.';
 
       renderAnalysis(s?.chart_analysis);
       const selection=s?.strategy_selection;
@@ -162,8 +164,10 @@
       lines('bn-decisions', (data.decisions || []).map(d => `${d.at} · ${d.state} · ${d.result?.decision ? d.result.decision.action + ': ' + d.result.decision.summary : 'No usable AI decision'}${d.result?.failure ? ' · '+d.result.failure.category+' · HTTP '+(d.result.failure.http_status || '—')+' · '+d.result.failure.latency_ms+'ms' : ''}${d.result?.validation_error ? ' · BLOCKED: '+d.result.validation_error : ''}`));
       const ops=data.operations;
       if(ops) {
+        const broker = ops.broker_readiness;
         lines('bn-operations',[
           `Operational status: ${ops.status} · ${ops.reason_codes.join(', ') || 'No active blockers'}`,
+          ...(broker ? [`Groww readiness: ${broker.status.toUpperCase()} · ${broker.reason_code || 'READ_ONLY_CHECK_OK'} · failed checks ${broker.failure_count} · first failure ${broker.first_failed_at || 'none'} · recovered ${broker.recovered_at || 'not yet'}`] : []),
           ...(ops.security_notices || []).map(notice=>`Notice: ${notice}`),
           `Recovery trades excluded from intraday results: ${ops.recovery_trades} · P&L ₹${ops.recovery_pnl}`,
           ...Object.entries(ops.workers || {}).map(([name,w])=>`${name}: ${w.status} · ${Math.round(w.age_seconds)}s ago`),

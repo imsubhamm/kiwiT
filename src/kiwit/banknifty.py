@@ -70,6 +70,51 @@ def market_failure_evidence(error, operation="snapshot"):
             "safe_message": message or code}
 
 
+def broker_readiness_failure_evidence(error):
+    """Classify a read-only broker check without retaining provider response bodies."""
+    message = str(error).lower()
+    if "approval" in message:
+        code = "GROWW_SESSION_APPROVAL_REQUIRED"
+        safe_message = "Groww session approval required"
+    elif isinstance(error, BrokerApiError):
+        code = "GROWW_PROVIDER_ERROR"
+        safe_message = "Groww provider readiness check failed"
+    elif isinstance(error, (OSError, TimeoutError)):
+        code = "GROWW_TRANSPORT_ERROR"
+        safe_message = "Groww readiness connection failed"
+    else:
+        code = "GROWW_QUOTE_INVALID"
+        safe_message = "Groww readiness quote was unavailable or invalid"
+    return {"reason_code": code, "safe_message": safe_message, "error_type": type(error).__name__}
+
+
+def broker_readiness_transition(previous, now, status):
+    """Apply the daily readiness lifecycle without losing first-failure evidence."""
+    previous = previous or {}
+    previous_status = previous.get("status")
+    if status == "failed":
+        new_incident = previous_status != "failed"
+        return {
+            "status": "failed",
+            "first_failed_at": previous.get("first_failed_at") or now,
+            "failure_count": int(previous.get("failure_count") or 0) + 1,
+            "recovered_at": previous.get("recovered_at"),
+            "failure_alert_status": "pending" if new_incident else previous.get("failure_alert_status"),
+            "recovery_alert_status": previous.get("recovery_alert_status"),
+            "notify": "failed" if new_incident else None,
+        }
+    recovered = previous_status == "failed"
+    return {
+        "status": "ready",
+        "first_failed_at": previous.get("first_failed_at"),
+        "failure_count": int(previous.get("failure_count") or 0),
+        "recovered_at": now if recovered else previous.get("recovered_at"),
+        "failure_alert_status": previous.get("failure_alert_status"),
+        "recovery_alert_status": "pending" if recovered else previous.get("recovery_alert_status"),
+        "notify": "recovered" if recovered else None,
+    }
+
+
 def experiment_id(state=None):
     state = state or {}
     risk = {key: str(state.get(key)) for key in (
@@ -188,6 +233,60 @@ class BankNiftyStore:
                     (now.astimezone(IST).date(), worker, now, status, evidence["reason_code"],
                      json.dumps(evidence, default=str)),
                 )
+
+    def record_broker_readiness(self, now, status, evidence):
+        """Update one daily readiness lifecycle and return whether an alert is due."""
+        day = now.astimezone(IST).date()
+        with self.locked() as connection:
+            previous = connection.execute(
+                "SELECT status,first_failed_at,failure_count,recovered_at,failure_alert_status,"
+                "recovery_alert_status FROM banknifty_broker_readiness WHERE trading_date=%s FOR UPDATE",
+                (day,),
+            ).fetchone()
+            prior = ({
+                "status": previous[0], "first_failed_at": previous[1], "failure_count": previous[2],
+                "recovered_at": previous[3], "failure_alert_status": previous[4],
+                "recovery_alert_status": previous[5],
+            } if previous else None)
+            transition = broker_readiness_transition(prior, now, status)
+            if status == "failed":
+                connection.execute(
+                    "INSERT INTO banknifty_broker_readiness("
+                    "trading_date,status,first_failed_at,last_checked_at,failure_count,reason_code,safe_message,"
+                    "recovered_at,failure_alert_status,recovery_alert_status) "
+                    "VALUES(%s,'failed',%s,%s,%s,%s,%s,%s,%s,%s) "
+                    "ON CONFLICT(trading_date) DO UPDATE SET status='failed',"
+                    "first_failed_at=EXCLUDED.first_failed_at,last_checked_at=EXCLUDED.last_checked_at,"
+                    "failure_count=EXCLUDED.failure_count,reason_code=EXCLUDED.reason_code,"
+                    "safe_message=EXCLUDED.safe_message,failure_alert_status=EXCLUDED.failure_alert_status,"
+                    "recovery_alert_status=EXCLUDED.recovery_alert_status",
+                    (day, transition["first_failed_at"], now, transition["failure_count"], evidence["reason_code"],
+                     evidence["safe_message"], transition["recovered_at"], transition["failure_alert_status"],
+                     transition["recovery_alert_status"]),
+                )
+                return transition
+            connection.execute(
+                "INSERT INTO banknifty_broker_readiness("
+                "trading_date,status,last_checked_at,failure_count,recovered_at,recovery_alert_status) "
+                "VALUES(%s,'ready',%s,0,%s,%s) ON CONFLICT(trading_date) DO UPDATE SET status='ready',"
+                "last_checked_at=EXCLUDED.last_checked_at,recovered_at=EXCLUDED.recovered_at,"
+                "recovery_alert_status=EXCLUDED.recovery_alert_status",
+                (day, now, transition["recovered_at"], transition["recovery_alert_status"]),
+            )
+            return transition
+
+    def record_broker_alert_delivery(self, now, kind, status):
+        if kind not in {"failure", "recovery"}:
+            raise ValueError("Unknown broker readiness alert kind")
+        statement = (
+            "UPDATE banknifty_broker_readiness SET failure_alert_status=%s,"
+            "failure_alert_attempts=failure_alert_attempts+1 WHERE trading_date=%s"
+            if kind == "failure"
+            else "UPDATE banknifty_broker_readiness SET recovery_alert_status=%s,"
+            "recovery_alert_attempts=recovery_alert_attempts+1 WHERE trading_date=%s"
+        )
+        with self.locked() as connection:
+            connection.execute(statement, (status, now.astimezone(IST).date()))
 
     def halted(self, connection):
         connection.execute("LOCK TABLE system_halts IN SHARE MODE")
@@ -376,6 +475,7 @@ class BankNiftyStore:
 class BankNiftyService:
     def __init__(self, database, broker, *, market=None, analyst=None, clock=None, mailer=None):
         self.store = BankNiftyStore(database)
+        self.broker = broker or getattr(market, "broker", None)
         self.market = market or (BankNiftyMarket(broker) if broker else None)
         self.analyst = analyst or OpenAIPaperAnalyst()
         self.clock = clock or (lambda: datetime.now(UTC))
@@ -869,6 +969,52 @@ class BankNiftyService:
                 )
             self.store.save(connection, state)
 
+    def _persist_broker_readiness(self, now, status, evidence):
+        lifecycle = self.store.record_broker_readiness(now, status, evidence)
+        incident_status = "failed" if status == "failed" else "recovered"
+        self.store.worker_incident("broker_readiness", now, incident_status, evidence)
+        heartbeat(self.store, "broker_readiness", now, "failed" if status == "failed" else "ok", evidence)
+        result = {"state": status, **lifecycle, **evidence}
+        notification = result.pop("notify")
+        if notification:
+            alert_kind = "failure" if notification == "failed" else "recovery"
+            try:
+                delivery, _error = self.mailer.send_broker_readiness(
+                    status=notification, occurred_at=now, reason_code=result["reason_code"],
+                    first_failed_at=result.get("first_failed_at"),
+                    failure_count=result.get("failure_count", 0), recovered_at=result.get("recovered_at"),
+                    dashboard_url=self.dashboard_url,
+                )
+            except Exception:  # noqa: BLE001 - record a safe delivery result for arbitrary adapters
+                delivery = "failed"
+            self.store.record_broker_alert_delivery(now, alert_kind, delivery)
+            result["alert_delivery"] = delivery
+        return result
+
+    def check_broker_readiness(self):
+        """Verify Groww approval and one quote through read-only endpoints only."""
+        now = self.clock()
+        local = now.astimezone(IST)
+        if regular_session(local.date()) is not True:
+            return {"state": "market_closed"}
+        symbol = os.getenv("KIWIT_GROWW_READINESS_SYMBOL", "NIFTYBEES").strip().upper()
+        try:
+            if self.broker is None:
+                raise BrokerApiError("Groww broker configuration is missing")
+            profile = self.broker.profile()
+            if not isinstance(profile, dict) or profile.get("nse_enabled") is False:
+                raise BrokerApiError("Groww NSE access is unavailable")
+            quote = self.broker.quote(symbol, segment="CASH")
+            if not isinstance(quote, dict) or not quote:
+                raise ValueError("Groww readiness quote is invalid")
+            evidence = {"reason_code": "GROWW_READINESS_RECOVERED", "safe_message": "Groww approval and quote ready",
+                        "symbol": symbol}
+            return self._persist_broker_readiness(now, "ready", evidence)
+        except (OSError, TimeoutError, ValueError, ArithmeticError, BrokerApiError) as error:
+            evidence = broker_readiness_failure_evidence(error)
+            evidence["symbol"] = symbol
+            return self._persist_broker_readiness(now, "failed", evidence)
+
     def observe(self):
         """Read-only market tape; requires no RUN consent and never invokes AI."""
         now = self.clock()
@@ -891,6 +1037,10 @@ class BankNiftyService:
                 self.store.record_market_snapshot(connection,
                     {"day": str(local.date()), "detail": "live_observation"}, snapshot,
                     {"version": SELECTOR_VERSION, "plans": [], "evaluations": [], "mode": "observation_only"})
+            self._persist_broker_readiness(self.clock(), "ready", {
+                "reason_code": "GROWW_READINESS_RECOVERED", "safe_message": "Groww approval and quote ready",
+                "symbol": "BANKNIFTY_OPTIONS",
+            })
             self.store.worker_incident("observer", self.clock(), "recovered",
                                        {"reason_code": "MARKET_SNAPSHOT_RECOVERED", "spot_at": snapshot["spot_at"]})
             heartbeat(self.store, "observer", self.clock(), "ok", {
@@ -900,6 +1050,10 @@ class BankNiftyService:
             return {"state": "observed"}
         except (OSError, ValueError, ArithmeticError, BrokerApiError) as error:
             evidence = market_failure_evidence(error)
+            if isinstance(error, BrokerApiError):
+                readiness_evidence = broker_readiness_failure_evidence(error)
+                readiness_evidence["symbol"] = "BANKNIFTY_OPTIONS"
+                self._persist_broker_readiness(self.clock(), "failed", readiness_evidence)
             self.store.worker_incident("observer", self.clock(), "failed", evidence)
             heartbeat(self.store, "observer", self.clock(), "failed", evidence)
             return {"state": "unavailable", "reason_code": evidence["reason_code"]}

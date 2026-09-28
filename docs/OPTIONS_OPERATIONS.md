@@ -6,6 +6,11 @@ release. Live broker orders remain disabled. No provider/model change is made.
 
 ## Runtime
 
+- Broker readiness: from 09:00 through 09:19 IST, calls only Groww's read-only
+  profile and cash-quote endpoints. Missing daily approval raises one operational
+  notification; recovery after approval and quote retrieval sends confirmation.
+  The daily record preserves the first failure, failed-check count, alert delivery,
+  and recovery time. It cannot place or cancel an order.
 - Observer: independently records read-only market snapshots during regular sessions,
   even without RUN or after a session completes. It never calls the analyst.
 - Supervisor: monitors existing positions independently of the observer, SMTP and AI.
@@ -16,6 +21,11 @@ release. Live broker orders remain disabled. No provider/model change is made.
   SMTP is at-least-once: a crash after server acceptance can duplicate an email.
 - Watchdog: checks the options worker heartbeats and operational blockers as well as
   web readiness. Authenticated operations readiness and the dashboard expose them.
+
+The Bank Nifty readiness banner shows `Groww session approval required` while the
+pre-market check is failing. It clears only after both authentication and a
+read-only quote succeed. `KIWIT_GROWW_READINESS_SYMBOL` optionally changes the
+cash symbol used for the check; it defaults to `NIFTYBEES`.
 
 Automatic database wake-ups are limited by a local clock/calendar policy:
 `/live` is checked every minute without querying PostgreSQL. `/ready` and options
