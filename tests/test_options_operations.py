@@ -218,6 +218,11 @@ def _snapshot_write_fixtures():
         'candidates': [{'symbol': 'BANKNIFTY26SEP55000CE', 'quote': {'bid': '100', 'ask': '101'}}],
         'chart_cache': {'daily': [{'at': NOW.isoformat(), 'close': '55000'}]},
         'provenance': {'release': 'test'},
+        'option_feature_coverage': {
+            'version': 'option-feature-coverage-v2',
+            'fields': {'implied_volatility': {'coverage': 'full', 'available_contracts': 1}},
+            'source': {'provider': 'Groww', 'endpoint': 'option_chain'},
+        },
     }
     selection = {
         'version': 'selector-test',
@@ -249,6 +254,8 @@ def _assert_enriched_market_snapshot(connection):
     assert snapshot['event_context'] == {'coverage': 'configured', 'risk': 'clear'}
     assert snapshot['entry_gate'] == {'allowed': True, 'reason_codes': []}
     assert snapshot['decision_event_key'] == 'decision-1'
+    assert snapshot['option_feature_coverage']['version'] == 'option-feature-coverage-v2'
+    assert snapshot['option_feature_coverage']['fields']['implied_volatility']['coverage'] == 'full'
     assert selection['plans'][0]['id'] == 'plan-1'
     assert selection['evaluations'][0]['playbook'] == 'range_reversal'
     assert scan_state == 'live_observation'

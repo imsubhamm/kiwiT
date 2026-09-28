@@ -102,7 +102,8 @@ PLAYBOOKS = (
 
 
 def catalogue():
-    return [dict(p, validation="unvalidated_paper_experiment") for p in PLAYBOOKS]
+    return [dict(p, required_option_fields=p.get("required_option_fields", []),
+                 validation="unvalidated_paper_experiment") for p in PLAYBOOKS]
 
 
 def playbook_by_id(playbook_id):
@@ -155,6 +156,26 @@ def quote_ok(quote, now):
         return False
     bid, ask = D(quote["bid"]), D(quote["ask"])
     return bid.is_finite() and ask.is_finite() and 0 < bid <= ask and (ask - bid) / ask <= D(".02")
+
+
+def missing_required_option_fields(contract, playbook):
+    """Fail closed for a volatility-dependent rule; price-only playbooks require none."""
+    available = (contract.get("quote") or {}).get("market_fields") or {}
+    return sorted(field for field in playbook.get("required_option_fields", ()) if field not in available)
+
+
+def decision_feature_coverage(coverage):
+    """Keep plan evidence bounded while full field provenance remains in market history."""
+    coverage = coverage or {}
+    source = coverage.get("source") or {}
+    return {
+        "version": coverage.get("version"),
+        "volatility_surface": coverage.get("volatility_surface"),
+        "volatility_risk_rules": coverage.get("volatility_risk_rules"),
+        "fallback": coverage.get("fallback"),
+        "source_status": source.get("status"),
+        "source_reason_code": source.get("reason_code"),
+    }
 
 
 def fingerprint(plan):
@@ -223,6 +244,12 @@ def select_plans(snapshot, state, now):
                 )
             )
             for contract in contracts:
+                missing_fields = missing_required_option_fields(contract, playbook)
+                if missing_fields:
+                    reasons.append(
+                        f"{contract['symbol']}: OPTION_FEATURES_UNAVAILABLE ({', '.join(missing_fields)})"
+                    )
+                    continue
                 capped = dict(contract["quote"], ask=str(D(contract["quote"]["ask"]) * D("1.005")))
                 qty = quantity_for(state, contract, capped)
                 if not qty:
@@ -286,7 +313,7 @@ def select_plans(snapshot, state, now):
                     "chase_remaining_atr": str(chase_remaining),
                     "chase_remaining_band": "tight" if chase_remaining < D(".05") else "available",
                     "event_risk": snapshot.get("event_context", {}).get("risk", "unknown"),
-                    "feature_coverage": snapshot.get("option_feature_coverage", {}),
+                    "feature_coverage": decision_feature_coverage(snapshot.get("option_feature_coverage")),
                 }
                 if calendar_reason:
                     entry_costs = cost_breakdown(fill * qty, "buy")
