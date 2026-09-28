@@ -12,6 +12,35 @@ from .options_risk import session_limit_reached
 ENTRY_CAP = 10
 COOLDOWN_SECONDS = 300
 
+# Status precedence: hard risk limits, calendar configuration/event risk,
+# position/cooldown constraints, then absence of an opportunity.
+ENTRY_BLOCKER_MESSAGES = {
+    "SESSION_PNL_LIMIT": "Session P&L limit reached; new entries disabled",
+    "DAILY_ENTRY_CAP": "Daily entry cap reached; new entries disabled",
+    "EVENT_CALENDAR_INVALID": "Event calendar invalid; repair or refresh the configured calendar",
+    "EVENT_CALENDAR_UNAVAILABLE": "Event calendar unavailable; configure a readable, current event calendar",
+    "HIGH_IMPACT_EVENT_WINDOW": "High-impact event window active; waiting for event risk to clear",
+    "ONE_POSITION_ACTIVE": "Existing position active; waiting for it to close",
+    "POST_EXIT_COOLDOWN": "Post-exit cooldown active; waiting before the next entry",
+    "NO_ELIGIBLE_PLAN": "No eligible entry plan; waiting for a supported setup",
+}
+
+
+def ordered_entry_reasons(reasons: list[str]) -> list[str]:
+    priority = {code: index for index, code in enumerate(ENTRY_BLOCKER_MESSAGES)}
+    return sorted(set(reasons), key=lambda code: (priority.get(code, len(priority)), code))
+
+
+def entry_blocker_detail(gate: dict) -> str | None:
+    """Render all current blockers in precedence order, independent of shadow plans."""
+    reasons = ordered_entry_reasons(gate["reason_codes"])
+    if not reasons:
+        return None
+    if len(reasons) > 1 and "NO_ELIGIBLE_PLAN" in reasons:
+        reasons.remove("NO_ELIGIBLE_PLAN")
+    return "; ".join(f"{ENTRY_BLOCKER_MESSAGES.get(code, 'Entry blocked')} [{code}]" for code in reasons)
+
+
 
 def entry_gate(state: dict, now: datetime, plans: list[dict], event_context: dict | None = None) -> dict:
     """Return machine-readable entry authority before any paid model call."""
@@ -32,13 +61,15 @@ def entry_gate(state: dict, now: datetime, plans: list[dict], event_context: dic
         reasons.append("NO_ELIGIBLE_PLAN")
     events = event_context or {}
     if event_context is not None and not state.get("position"):
-        if events.get("coverage") != "configured":
+        if events.get("coverage") == "invalid":
+            reasons.append("EVENT_CALENDAR_INVALID")
+        elif events.get("coverage") != "configured":
             reasons.append("EVENT_CALENDAR_UNAVAILABLE")
         elif events.get("risk") != "clear":
             reasons.append("HIGH_IMPACT_EVENT_WINDOW")
     return {
         "allowed": not reasons,
-        "reason_codes": reasons,
+        "reason_codes": ordered_entry_reasons(reasons),
         "cooldown_remaining_seconds": remaining,
         "entry_cap": ENTRY_CAP,
         "entries_remaining": max(0, ENTRY_CAP - int(state.get("entries", 0))),
