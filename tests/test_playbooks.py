@@ -183,6 +183,20 @@ def test_independent_execution_rejects_invalid_plans(failure):
         validate_plan(d, snapshot, state, quote, sample, now)
 
 
+def test_plan_validation_requires_current_execution_calendar_authority():
+    snapshot, state, quote = fixtures()
+    with pytest.raises(ValueError, match="Current clear event calendar"):
+        validate_plan(
+            decision(snapshot),
+            snapshot,
+            state,
+            quote,
+            {"at": NOW.isoformat(), "spot": "55000"},
+            NOW,
+            execution_event_context={"coverage": "invalid", "risk": "unknown"},
+        )
+
+
 def test_contract_selection_is_deterministic_and_respects_daily_risk_budget():
     snapshot, state, quote = fixtures()
     other = deepcopy(snapshot["candidates"][0])

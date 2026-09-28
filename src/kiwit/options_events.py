@@ -15,6 +15,28 @@ MAX_CALENDAR_AGE = timedelta(days=7)
 ALLOWED_IMPACTS = frozenset({"low", "medium", "high"})
 
 
+def entry_calendar_blocker(context: dict | None) -> dict | None:
+    """Return stable execution-authority evidence for a non-clear calendar."""
+    current = context or {}
+    coverage = current.get("coverage")
+    if coverage == "invalid":
+        return {
+            "reason_code": "EVENT_CALENDAR_INVALID",
+            "detail_code": current.get("reason_code") or "CALENDAR_INVALID",
+        }
+    if coverage != "configured":
+        return {
+            "reason_code": "EVENT_CALENDAR_UNAVAILABLE",
+            "detail_code": current.get("reason_code") or "CALENDAR_UNAVAILABLE",
+        }
+    if current.get("risk") != "clear":
+        return {
+            "reason_code": "HIGH_IMPACT_EVENT_WINDOW",
+            "detail_code": "HIGH_IMPACT_EVENT_WINDOW",
+        }
+    return None
+
+
 class EventCalendarValidationError(ValueError):
     """A safe, machine-readable calendar validation failure."""
 
