@@ -73,6 +73,24 @@ SCHEMA = {
 REQUEST_BUDGET = 20_000
 
 
+def compact_option_feature_coverage(coverage):
+    """Expose rule-relevant availability to the model; retain full provenance outside the prompt."""
+    coverage = coverage or {}
+    source = coverage.get("source") or {}
+    return {
+        "version": coverage.get("version"),
+        "contracts": coverage.get("contracts"),
+        "available_contracts_by_field": coverage.get("available_contracts_by_field") or {},
+        "source": {
+            "status": source.get("status"),
+            "reason_code": source.get("reason_code"),
+        },
+        "volatility_surface": coverage.get("volatility_surface"),
+        "volatility_risk_rules": coverage.get("volatility_risk_rules"),
+        "fallback": coverage.get("fallback"),
+    }
+
+
 def compact_decision_snapshot(snapshot):
     """Bound the paid prompt. Full tapes stay in market history, not in the model request."""
     snapshot = snapshot or {}
@@ -172,7 +190,7 @@ def compact_decision_snapshot(snapshot):
         "entries": snapshot.get("entries"),
         "entry_gate": snapshot.get("entry_gate"),
         "decision_event_key": snapshot.get("decision_event_key"),
-        "option_feature_coverage": snapshot.get("option_feature_coverage"),
+        "option_feature_coverage": compact_option_feature_coverage(snapshot.get("option_feature_coverage")),
         "premium_history": (snapshot.get("premium_history") or [])[-40:],
         "event_context": snapshot.get("event_context"),
         "realized_pnl": snapshot.get("realized_pnl"),

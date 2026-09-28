@@ -16,12 +16,130 @@ from .brokers.groww import BrokerApiError
 from .chart_analysis import VERSION, analyse, history_context, parse_minutes
 from .intraday import IST, _quote_time
 
+OPTION_FIELDS = ("open_interest", "volume", "implied_volatility", "delta", "gamma", "theta", "vega")
+VOLATILITY_FIELDS = ("implied_volatility", "delta", "gamma", "theta", "vega")
+GROWW_OPTION_CHAIN_SOURCE = "https://api.groww.in/v1/option-chain/exchange/NSE/underlying/BANKNIFTY"
+
 
 def positive(value):
     number = Decimal(str(value))
     if not number.is_finite() or number <= 0:
         raise ValueError("Missing positive market value")
     return number
+
+
+def option_fields(payload: dict) -> dict[str, str]:
+    """Return only finite, domain-valid provider values; never derive or impute them."""
+    aliases = {
+        "open_interest": ("open_interest", "oi"),
+        "volume": ("volume", "total_traded_quantity"),
+        "implied_volatility": ("implied_volatility", "iv"),
+        "delta": ("delta",), "gamma": ("gamma",), "theta": ("theta",), "vega": ("vega",),
+    }
+    fields = {}
+    for name, keys in aliases.items():
+        value = next((payload.get(key) for key in keys if payload.get(key) is not None), None)
+        if value is None:
+            continue
+        try:
+            number = Decimal(str(value))
+        except (ArithmeticError, ValueError):
+            continue
+        valid = number.is_finite()
+        if name in {"open_interest", "volume"}:
+            valid = valid and number >= 0 and number == number.to_integral_value()
+        elif name == "implied_volatility":
+            valid = valid and 0 < number <= 500
+        elif name == "delta":
+            valid = valid and -1 <= number <= 1
+        elif name in {"gamma", "vega"}:
+            valid = valid and number >= 0
+        if valid:
+            fields[name] = str(number)
+    return fields
+
+
+def option_chain_features(payload: dict, received_at: datetime, now: datetime) -> dict[str, dict]:
+    """Normalize Groww option-chain fields with receipt-time point-in-time provenance."""
+    if received_at.tzinfo is None or now.tzinfo is None or not 0 <= (now - received_at).total_seconds() <= 30:
+        raise ValueError("Option-chain fields are stale or future-dated")
+    strikes = payload.get("strikes")
+    if not isinstance(strikes, dict):
+        raise TypeError("Option-chain strikes are missing")
+    result = {}
+    for contracts in strikes.values():
+        if not isinstance(contracts, dict):
+            continue
+        for kind in ("CE", "PE"):
+            contract = contracts.get(kind)
+            if not isinstance(contract, dict):
+                continue
+            symbol = contract.get("trading_symbol")
+            if not isinstance(symbol, str) or not symbol:
+                continue
+            greeks = contract.get("greeks") if isinstance(contract.get("greeks"), dict) else {}
+            fields = option_fields({
+                "open_interest": contract.get("open_interest"),
+                "volume": contract.get("volume"),
+                "iv": greeks.get("iv"),
+                "delta": greeks.get("delta"),
+                "gamma": greeks.get("gamma"),
+                "theta": greeks.get("theta"),
+                "vega": greeks.get("vega"),
+            })
+            if fields:
+                result[symbol] = {
+                    "fields": fields,
+                    "field_sources": {
+                        field: {
+                            "provider": "Groww",
+                            "endpoint": "option_chain",
+                            "source_reference": GROWW_OPTION_CHAIN_SOURCE,
+                            "observed_at": received_at.isoformat(),
+                            "timestamp_basis": "client_receipt",
+                        }
+                        for field in fields
+                    },
+                }
+    return result
+
+
+def option_feature_coverage(candidates: list[dict], source: dict) -> dict:
+    contracts = len(candidates)
+    counts = {
+        field: sum(field in candidate["quote"].get("market_fields", {}) for candidate in candidates)
+        for field in OPTION_FIELDS
+    }
+    fields = {}
+    for field, count in counts.items():
+        evidence = [
+            candidate["quote"].get("market_field_sources", {}).get(field)
+            for candidate in candidates
+            if field in candidate["quote"].get("market_fields", {})
+        ]
+        evidence = [item for item in evidence if isinstance(item, dict)]
+        observed = sorted(item["observed_at"] for item in evidence if item.get("observed_at"))
+        fields[field] = {
+            "available_contracts": count,
+            "coverage": "unavailable" if count == 0 else "full" if count == contracts else "partial",
+            "sources": sorted({
+                f"{item.get('provider', 'unknown')}:{item.get('endpoint', 'unknown')}"
+                for item in evidence
+            }),
+            "latest_observed_at": observed[-1] if observed else None,
+        }
+    volatility_complete = contracts > 0 and all(counts[field] == contracts for field in VOLATILITY_FIELDS)
+    return {
+        "version": "option-feature-coverage-v2",
+        "contracts": contracts,
+        "available_contracts_by_field": counts,
+        "fields": fields,
+        "source": source,
+        "premium_history": "retained_contract_tape",
+        "volatility_surface": "available" if counts["implied_volatility"] >= 3 else "insufficient_provider_fields",
+        "volatility_risk_rules": "available" if volatility_complete else "unavailable",
+        "fallback": "allow_price_only_rules_block_volatility_dependent_rules" if not volatility_complete else "not_required",
+    }
 
 
 def contracts_from_csv(text: str, today: date) -> list[dict]:
@@ -76,21 +194,15 @@ def executable_quote(payload: dict, now: datetime, *, entry: bool = True) -> dic
         if ask < bid or (ask - bid) / ask > Decimal(".02") or ask_size <= 0:
             raise ValueError("Crossed, illiquid or wide-spread quote")
         quote.update(ask=str(ask), ask_size=ask_size)
-    aliases = {
-        "open_interest": ("open_interest", "oi"),
-        "volume": ("volume", "total_traded_quantity"),
-        "implied_volatility": ("implied_volatility", "iv"),
-        "delta": ("delta",), "gamma": ("gamma",), "theta": ("theta",), "vega": ("vega",),
-    }
-    fields = {}
-    for name, keys in aliases.items():
-        value = next((payload.get(key) for key in keys if payload.get(key) is not None), None)
-        if value is None:
-            continue
-        number = Decimal(str(value))
-        if number.is_finite() and (name not in {"open_interest", "volume"} or number >= 0):
-            fields[name] = str(number)
+    fields = option_fields(payload)
     quote["market_fields"] = fields
+    quote["market_field_sources"] = {
+        field: {
+            "provider": "Groww", "endpoint": "live_data_quote", "observed_at": stamp.isoformat(),
+            "timestamp_basis": "provider_last_trade_time",
+        }
+        for field in fields
+    }
     return quote
 
 
@@ -169,6 +281,30 @@ class BankNiftyMarket:
         stamp = datetime.fromisoformat(history[-1]["at"])
         spot = positive(history[-1]["spot"])
         contracts = self.contracts(now.astimezone(IST).date())
+        chain_features = {}
+        chain_source = {
+            "provider": "Groww", "endpoint": "option_chain", "source_reference": GROWW_OPTION_CHAIN_SOURCE,
+            "status": "unavailable", "observed_at": None, "timestamp_basis": "client_receipt",
+            "reason_code": "OPTION_CHAIN_ENDPOINT_UNAVAILABLE",
+        }
+        chain_fetch = getattr(self.broker, "option_chain", None)
+        if callable(chain_fetch):
+            try:
+                payload = chain_fetch("BANKNIFTY", contracts[0]["expiry"], exchange="NSE")
+                received_at = self.clock()
+                chain_features = option_chain_features(payload, received_at, self.clock())
+                chain_source.update(
+                    status="available" if chain_features else "invalid",
+                    observed_at=received_at.isoformat(),
+                    reason_code=None if chain_features else "OPTION_CHAIN_NO_VALID_FIELDS",
+                    expiry=contracts[0]["expiry"], matched_contracts=len(chain_features),
+                )
+            except BrokerApiError:
+                chain_source["reason_code"] = "OPTION_CHAIN_PROVIDER_ERROR"
+            except OSError:
+                chain_source["reason_code"] = "OPTION_CHAIN_TRANSPORT_ERROR"
+            except (TypeError, ValueError, ArithmeticError):
+                chain_source["reason_code"] = "OPTION_CHAIN_VALIDATION_ERROR"
         strikes = sorted({Decimal(c["strike"]) for c in contracts}, key=lambda strike: abs(strike - spot))[:5]
         candidates = []
         quote_failures = {"validation": 0, "transport": 0, "provider": 0}
@@ -178,6 +314,10 @@ class BankNiftyMarket:
             if contract["symbol"] in eligible_symbols | tracked:
                 try:
                     quote = self.quote(contract["symbol"], now)
+                    enrichment = chain_features.get(contract["symbol"])
+                    if enrichment:
+                        quote["market_fields"].update(enrichment["fields"])
+                        quote["market_field_sources"].update(enrichment["field_sources"])
                     if min(quote["bid_size"], quote["ask_size"]) >= contract["lot"]:
                         candidates.append(dict(contract, quote=quote,
                                                selection_eligible=contract["symbol"] in eligible_symbols,
@@ -188,8 +328,8 @@ class BankNiftyMarket:
                     quote_failures["transport"] += 1
                 except BrokerApiError:
                     quote_failures["provider"] += 1
-        optional = ("open_interest", "volume", "implied_volatility", "delta", "gamma", "theta", "vega")
-        covered = {field: sum(field in c["quote"].get("market_fields", {}) for c in candidates) for field in optional}
+        coverage = option_feature_coverage(candidates, chain_source)
+        coverage["quote_failures"] = quote_failures
         return {
             "at": now.isoformat(),
             "spot": str(spot),
@@ -199,13 +339,7 @@ class BankNiftyMarket:
             "underlying_source": "Groww completed 1-minute index candles",
             "chart_analysis": analysis,
             "chart_cache": context,
-            "option_feature_coverage": {
-                "contracts": len(candidates),
-                "available_contracts_by_field": covered,
-                "premium_history": "retained_contract_tape",
-                "volatility_surface": "available" if covered["implied_volatility"] >= 3 else "insufficient_provider_fields",
-                "quote_failures": quote_failures,
-            },
+            "option_feature_coverage": coverage,
         }
 
 

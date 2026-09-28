@@ -155,6 +155,11 @@ def diagnostics(store, now):
             "ORDER BY event_at DESC,event_id DESC LIMIT 500",
             (day,),
         ).fetchall()
+        broker_readiness_row = connection.execute(
+            "SELECT status,first_failed_at,last_checked_at,failure_count,reason_code,safe_message,recovered_at,"
+            "failure_alert_status,failure_alert_attempts,recovery_alert_status,recovery_alert_attempts "
+            "FROM banknifty_broker_readiness WHERE trading_date=%s", (day,),
+        ).fetchone()
     health = {w: {"at": at.isoformat(), "status": status, "age_seconds": (now-at).total_seconds(), "detail": detail}
               for w, at, status, detail in workers}
     issues = []
@@ -179,6 +184,8 @@ def diagnostics(store, now):
         liveness_issues.extend(decision_issues)
     if len(calls) == 3 and all(status == "failed" for status, _ in calls):
         issues.append("AI_CONSECUTIVE_FAILURES")
+    if broker_readiness_row and broker_readiness_row[0] == "failed":
+        issues.append(broker_readiness_row[4] or "GROWW_READINESS_FAILED")
     if state and state.get("position"):
         if state["day"] != str(day):
             issues.append("OVERDUE_POSITION")
@@ -198,10 +205,27 @@ def diagnostics(store, now):
     strategy = strategy_readiness(scans, now, running=running)
     if strategy["status"] == "degraded":
         issues.append(strategy["reason_code"])
+    broker_readiness = None
+    if broker_readiness_row:
+        (readiness_status, first_failed_at, last_checked_at, failure_count, reason_code, safe_message,
+         recovered_at, failure_alert_status, failure_alert_attempts, recovery_alert_status,
+         recovery_alert_attempts) = broker_readiness_row
+        broker_readiness = {
+            "status": readiness_status,
+            "first_failed_at": first_failed_at.isoformat() if first_failed_at else None,
+            "last_checked_at": last_checked_at.isoformat(),
+            "failure_count": failure_count,
+            "reason_code": reason_code,
+            "message": safe_message,
+            "recovered_at": recovered_at.isoformat() if recovered_at else None,
+            "failure_alert": {"status": failure_alert_status, "attempts": failure_alert_attempts},
+            "recovery_alert": {"status": recovery_alert_status, "attempts": recovery_alert_attempts},
+        }
     return {"status": "degraded" if issues else "ok", "reason_codes": issues, "workers": health,
             "liveness": {"status": "degraded" if liveness_issues else "ok",
                          "reason_codes": liveness_issues},
             "strategy_readiness": strategy,
+            "broker_readiness": broker_readiness,
             "in_session": in_session, "pending_reports": pending, "security_notices": notices,
             "unresolved_ai_calls": unresolved_calls,
             "interrupted_ai_calls": interrupted_calls[0], "interrupted_ai_reserved_usd": str(interrupted_calls[1]),

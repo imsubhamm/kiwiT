@@ -46,6 +46,26 @@ class GrowwBrokerTests(unittest.TestCase):
         self.assertEqual(client.positions()[0]["quantity"], 2)
         self.assertIn("segment=CASH", positions.requests[0][0].full_url)
 
+    def test_option_chain_uses_official_read_only_endpoint(self):
+        transport = FakeTransport({"status": "SUCCESS", "payload": {"strikes": {}}})
+        client = GrowwBrokerClient(self.settings(), transport)
+        self.assertEqual(client.option_chain("banknifty", "2026-09-29"), {"strikes": {}})
+        request, _timeout = transport.requests[0]
+        self.assertEqual(request.method, "GET")
+        self.assertEqual(
+            request.full_url,
+            "https://api.groww.in/v1/option-chain/exchange/NSE/underlying/BANKNIFTY?expiry_date=2026-09-29",
+        )
+
+    def test_option_chain_rejects_invalid_parameters_without_request(self):
+        transport = FakeTransport({"status": "SUCCESS", "payload": {}})
+        client = GrowwBrokerClient(self.settings(), transport)
+        for args in (("bad symbol!", "2026-09-29", "NSE"), ("BANKNIFTY", "29-09-2026", "NSE"),
+                     ("BANKNIFTY", "2026-09-29", "MCX")):
+            with self.assertRaises(ValueError):
+                client.option_chain(*args)
+        self.assertEqual(transport.requests, [])
+
     def test_failure_is_sanitized_and_token_is_not_exposed(self):
         token = self.settings().access_token
         transport = FakeTransport({"status": "FAILURE", "error": {"code": "GA001", "message": token}})

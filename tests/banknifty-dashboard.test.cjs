@@ -102,6 +102,21 @@ test('strategy readiness degradation is prominent while process liveness stays s
   assert.match(operations,/Process liveness: ok.*Workers healthy/);
   assert.match(operations,/Strategy readiness: degraded.*EVENT_CALENDAR_UNAVAILABLE.*300s/);
 });
+test('Groww approval failure is prominent and clears after quote recovery',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  data.operations={status:'degraded',reason_codes:['GROWW_SESSION_APPROVAL_REQUIRED'],workers:{},funnel:{},rejection_counts:[],
+    broker_readiness:{status:'failed',message:'Groww session approval required',reason_code:'GROWW_SESSION_APPROVAL_REQUIRED',
+      first_failed_at:'2026-09-11T09:00:00+05:30',failure_count:3,recovered_at:null}};
+  timers[0]();await settle();
+  assert.equal(nodes['bn-readiness'].textContent,'Groww session approval required');
+  assert.match(nodes['bn-next-action'].textContent,/Open Groww.*3 failed checks.*successful read-only quote/);
+  data.operations.status='ok';data.operations.reason_codes=[];
+  Object.assign(data.operations.broker_readiness,{status:'ready',message:'Groww session approval required',
+    recovered_at:'2026-09-11T09:12:00+05:30'});
+  timers[0]();await settle();
+  assert.equal(nodes['bn-readiness'].textContent,'Groww approval and quote ready · paper only');
+  assert.doesNotMatch(nodes['bn-next-action'].textContent,/Open Groww/);
+});
 test('chart and evidence render safely, support timeframes and label stale data',async()=>{
   const {nodes,data,timers}=setup();await settle();
   const bar={at:'2026-01-01T09:30:00+05:30',open:100,high:105,low:99,close:103};

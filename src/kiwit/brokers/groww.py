@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -205,6 +205,22 @@ class GrowwBrokerClient:
         return self._request(
             "GET", "/v1/live-data/quote",
             query={"exchange": exchange, "segment": self._segment(segment), "trading_symbol": symbol},
+        )
+
+    def option_chain(self, underlying: str, expiry_date: str, exchange: str = "NSE") -> dict[str, Any]:
+        """Fetch Groww's read-only option chain, including provider-computed IV and Greeks."""
+        symbol = underlying.upper()
+        if not SYMBOL.fullmatch(symbol):
+            raise ValueError("invalid option-chain underlying")
+        if exchange not in {"NSE", "BSE"}:
+            raise ValueError("unsupported exchange")
+        try:
+            expiry = date.fromisoformat(expiry_date).isoformat()
+        except (TypeError, ValueError) as error:
+            raise ValueError("invalid option-chain expiry") from error
+        return self._request(
+            "GET", f"/v1/option-chain/exchange/{exchange}/underlying/{symbol}",
+            query={"expiry_date": expiry},
         )
 
     def place_order(self, _order: dict[str, Any]) -> dict[str, Any]:

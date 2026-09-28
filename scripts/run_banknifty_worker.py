@@ -12,7 +12,9 @@ from kiwit.monitoring_schedule import scheduled_worker_due
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("decision", "observe", "supervise", "reports"), default="decision")
+    parser.add_argument(
+        "--mode", choices=("decision", "readiness", "observe", "supervise", "reports"), default="decision"
+    )
     parser.add_argument('--scheduled', action='store_true', help='Apply automatic database wake-up schedule')
     args = parser.parse_args()
     mode = args.mode
@@ -25,7 +27,9 @@ def main():
     except ValueError:
         broker = None
     service = BankNiftyService(database, broker)
-    if mode == "observe":
+    if mode == "readiness":
+        result = service.check_broker_readiness()
+    elif mode == "observe":
         result = service.observe()
     elif mode == "supervise":
         state = service.supervise()
