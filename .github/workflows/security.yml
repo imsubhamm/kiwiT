@@ -23,7 +23,9 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: pip install -e '.[api,production,workflow,research,ml,llm]' pip-audit bandit
       - name: Audit dependencies
-        run: pip-audit
+        # kiwiT is installed editable from this checkout and is not a PyPI dependency.
+        # Skipping that local package keeps every resolved third-party dependency audited.
+        run: pip-audit --skip-editable
       - name: Static security analysis
         run: bandit -q -r src scripts -x tests
       - name: Reject committed private keys
