@@ -5,7 +5,7 @@ before the barrier works. Only use on the single systemd application host.
 """
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec B404 -- fixed systemctl executable, no shell
 import time
 
 
@@ -14,8 +14,8 @@ class DeploymentDeferred(RuntimeError):
 
 
 def systemctl(*args):
-    return subprocess.run(
-        ["systemctl", *args], capture_output=True, text=True, timeout=30, check=False
+    return subprocess.run(  # nosec B603 -- arguments supplied by the root deployment script, no shell
+        ["/usr/bin/systemctl", *args], capture_output=True, text=True, timeout=30, check=False
     )
 
 
