@@ -144,3 +144,27 @@ Invalid calendars use `EVENT_CALENDAR_INVALID`; missing configuration uses
 `EVENT_CALENDAR_UNAVAILABLE`. Status is rebuilt each scan, so recovery clears the
 calendar message and restores the current setup/decision status. Existing position
 monitoring and terminal session status retain their authority.
+
+### Setup reconsideration (KIW-49)
+
+The paid-decision event key includes the playbook, pattern type, pattern candle
+`pattern_at`, contract, underlying trigger/invalidation/chase bounds, and existing
+headroom/chase/event-risk bands. Plan IDs, generation/expiry times, live premium
+changes within the same bands, and plan ordering do not create events. A later
+candle occurrence of the same pattern on the same contract is a new event.
+
+For an unchanged eligible entry event, an applied HOLD, execution rejection, or
+failed/interrupted AI call may be reviewed again after 120 seconds, with at most
+three total attempts per key per trading day. Rejections receive a new decision
+and fresh execution validation; rejected orders are never replayed. Since the
+stored rejection status does not distinguish transient and permanent causes,
+all rejections use this conservative cap. Disappearance and reappearance of the
+same occurrence, switching to another event and back, and worker restarts retain
+the attempt count. A genuinely new occurrence or material change gets its own key.
+Position HOLD decisions do not enable periodic paid position monitoring.
+
+The `strategy_scan` decision-event evidence records the trigger/suppression reason,
+attempt count, cap, and retry interval. Call snapshots retain the same evidence.
+Entry gates, warmup/freshness checks, calendar authority, the shared two-minute
+reservation slot, failure circuit, and daily/rolling budgets remain in force.
+Reservation rechecks event eligibility under the existing store lock.

@@ -759,3 +759,86 @@ def test_sizing_uses_trade_stop_but_keeps_remaining_session_loss_budget():
     assert quantity_for(state, CONTRACT, quote()) < original
     state["realized_pnl"] = "-5000"
     assert quantity_for(state, CONTRACT, quote()) == 0
+
+
+def test_hold_reconsiders_stable_occurrence_without_polling_or_flicker_reset(desk):
+    service, market, analyst, clock = desk
+    analyst.action = "HOLD"
+    original = market.snapshot
+    occurrence = NOW + timedelta(minutes=4)
+    visible = [True]
+
+    def stable_snapshot(now):
+        snapshot = original(now)
+        if visible[0]:
+            snapshot["chart_analysis"]["patterns"][0]["at"] = occurrence.isoformat()
+        else:
+            snapshot["chart_analysis"]["patterns"] = []
+        return snapshot
+
+    market.snapshot = stable_snapshot
+    warm(desk)
+    assert analyst.calls == 1
+    service.run_once()
+    assert analyst.calls == 1
+    visible[0] = False
+    clock[0] += timedelta(seconds=30)
+    service.run_once()
+    visible[0] = True
+    clock[0] += timedelta(seconds=30)
+    service.run_once()
+    assert analyst.calls == 1
+    clock[0] += timedelta(seconds=60)
+    service.run_once()
+    assert analyst.calls == 2
+    # Identical persisted occurrence after a worker restart remains suppressed.
+    restarted = BankNiftyService(service.store.database, None, market=market, analyst=analyst, clock=lambda: clock[0])
+    restarted.run_once()
+    assert analyst.calls == 2
+    clock[0] += timedelta(seconds=120)
+    restarted.run_once()
+    assert analyst.calls == 3
+    with service.store.locked() as connection:
+        attempts = service.store.decision_attempts(connection, str(NOW.date()),
+                                                  analyst.last_snapshot["decision_event_key"])
+    assert len(attempts) == 3
+
+
+def test_new_same_type_occurrence_after_hold_is_reviewed(desk):
+    service, _market, analyst, clock = desk
+    analyst.action = "HOLD"
+    warm(desk)
+    original_key = analyst.last_snapshot["decision_event_key"]
+    # The fixture supplies a new pattern candle each scan.
+    clock[0] += timedelta(minutes=2)
+    service.run_once()
+    assert analyst.calls == 2
+    assert analyst.last_snapshot["decision_event_key"] != original_key
+
+
+def test_transient_execution_rejection_is_reconsidered_with_fresh_authority(desk):
+    service, market, analyst, clock = desk
+    original_snapshot = market.snapshot
+    occurrence = NOW + timedelta(minutes=4)
+
+    def stable_snapshot(now):
+        snapshot = original_snapshot(now)
+        snapshot["chart_analysis"]["patterns"][0]["at"] = occurrence.isoformat()
+        return snapshot
+
+    original_underlying = market.latest_underlying
+
+    def unavailable(now):
+        raise ValueError("Underlying temporarily unavailable")
+
+    market.snapshot = stable_snapshot
+    market.latest_underlying = unavailable
+    assert warm(desk)["position"] is None
+    assert analyst.calls == 1
+    market.latest_underlying = original_underlying
+    service.run_once()
+    assert analyst.calls == 1
+    clock[0] += timedelta(minutes=2)
+    service.run_once()
+    assert analyst.calls == 2
+    assert service.status()["session"]["position"] is not None
