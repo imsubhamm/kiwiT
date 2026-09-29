@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal as D
 
 from .options_risk import session_limit_reached
 
 ENTRY_CAP = 10
 COOLDOWN_SECONDS = 300
+RECONSIDER_SECONDS = 120
+MAX_EVENT_ATTEMPTS = 3
 
 # Status precedence: hard risk limits, calendar configuration/event risk,
 # position/cooldown constraints, then absence of an opportunity.
@@ -98,6 +100,9 @@ def decision_event(snapshot: dict) -> dict:
             {
                 "playbook": plan.get("playbook_id"),
                 "pattern": plan.get("pattern_id"),
+                "pattern_at": plan.get("pattern_at"),
+                **{field: str(D(str(plan[field])).normalize()) if plan.get(field) is not None else None
+                   for field in ("underlying_trigger", "underlying_invalidation", "underlying_max_chase")},
                 "symbol": plan.get("symbol"),
                 "headroom_band": plan.get("decision_context", {}).get("price_headroom_band"),
                 "chase_band": plan.get("decision_context", {}).get("chase_remaining_band"),
@@ -105,6 +110,37 @@ def decision_event(snapshot: dict) -> dict:
             }
             for plan in plans
         ]
+        material.sort(key=lambda item: json.dumps(item, sort_keys=True))
         kind = "ELIGIBLE_PLAN_SET_CHANGED"
     key = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]
     return {"call": True, "kind": kind, "key": key, "material": material}
+
+
+def reconsider_event(trigger: dict, attempts: list, now: datetime) -> dict:
+    """Bound retries per event across polling, disappearance and worker restarts.
+
+    Attempts are newest first (state, created_at, decision action) for this key.
+    All rejections get a fresh review, never a replay of the rejected order;
+    deterministic entry and execution authority remain responsible for safety.
+    """
+    reason = trigger["kind"]
+    due = False
+    if trigger["call"]:
+        if not attempts:
+            due, reason = True, "NEW_SETUP_OR_MATERIAL_CHANGE"
+        else:
+            status, created_at, action = attempts[0]
+            retryable = status in {"failed", "interrupted", "rejected"} or (
+                status == "applied" and action == "HOLD" and trigger["kind"] == "ELIGIBLE_PLAN_SET_CHANGED"
+            )
+            if len(attempts) >= MAX_EVENT_ATTEMPTS:
+                reason = "EVENT_ATTEMPT_LIMIT"
+            elif not retryable:
+                reason = "UNCHANGED_EVENT"
+            elif now < created_at + timedelta(seconds=RECONSIDER_SECONDS):
+                reason = "RECONSIDERATION_COOLDOWN"
+            else:
+                due = True
+                reason = "HOLD_RECONSIDERATION" if status == "applied" else "RETRY_" + status.upper()
+    return {**trigger, "new": due, "reason": reason, "attempts": len(attempts),
+            "max_attempts": MAX_EVENT_ATTEMPTS, "retry_after_seconds": RECONSIDER_SECONDS}

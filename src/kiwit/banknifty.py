@@ -35,7 +35,7 @@ from .options_calendar import regular_session
 from .options_events import entry_calendar_blocker, event_context
 from .options_market import BankNiftyMarket
 from .options_operations import diagnostics, heartbeat, report_backlog
-from .options_policy import ENTRY_CAP, decision_event, entry_blocker_detail, entry_gate
+from .options_policy import ENTRY_CAP, decision_event, entry_blocker_detail, entry_gate, reconsider_event
 from .options_risk import (
     BROKER_COST_VERSION,
     cost_breakdown,
@@ -344,6 +344,13 @@ class BankNiftyStore:
             (DESK,),
         ).fetchone()[0]
 
+    def decision_attempts(self, connection, day, key):
+        return connection.execute(
+            "SELECT state,created_at,result->'decision'->>'action' FROM banknifty_ai_calls "
+            "WHERE trading_date=%s AND snapshot->>'decision_event_key'=%s "
+            "ORDER BY created_at DESC LIMIT 3", (day, key),
+        ).fetchall()
+
     def reserve(self, now, snapshot):
         with self.locked() as connection:
             state = self.latest(connection)
@@ -352,6 +359,15 @@ class BankNiftyStore:
             if self.halted(connection):
                 return None
             day = state["day"]
+            # Recheck under the reservation lock: another worker may have called
+            # after this scan read its history. A new slot must not bypass bounds.
+            if snapshot.get("decision_event_key"):
+                trigger = decision_event(snapshot)
+                attempts = self.decision_attempts(connection, day, trigger["key"])
+                eligibility = reconsider_event(trigger, attempts, now)
+                if not eligibility["new"]:
+                    self.event(connection, state, "decision_suppressed", eligibility)
+                    return None
             failures = connection.execute(
                 "SELECT state,snapshot->>'at' FROM banknifty_ai_calls WHERE trading_date=%s "
                 "ORDER BY slot DESC LIMIT 3", (day,)).fetchall()
@@ -1238,15 +1254,9 @@ class BankNiftyService:
                 snapshot["entry_gate"] = gate
                 trigger = decision_event(snapshot)
                 snapshot["decision_event_key"] = trigger["key"]
-                previous = connection.execute(
-                    "SELECT snapshot->>'decision_event_key',state,created_at FROM banknifty_ai_calls WHERE trading_date=%s "
-                    "AND snapshot->>'decision_event_key' IS NOT NULL ORDER BY created_at DESC LIMIT 1",
-                    (current["day"],),
-                ).fetchone()
-                retry_due = bool(previous and previous[1] in {"failed", "interrupted"}
-                                 and now >= previous[2] + timedelta(minutes=2))
-                trigger["new"] = bool(trigger["call"] and
-                                      (not previous or previous[0] != trigger["key"] or retry_due))
+                attempts = self.store.decision_attempts(connection, current["day"], trigger["key"])
+                trigger = reconsider_event(trigger, attempts, now)
+                snapshot["decision_event"] = trigger
                 if not current["position"]:
                     blocker_detail = entry_blocker_detail(gate)
                     if blocker_detail:
