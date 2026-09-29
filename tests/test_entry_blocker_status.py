@@ -69,7 +69,13 @@ def test_session_displays_calendar_blocker_and_recovers(desk, monkeypatch, cover
         assert recovered["position"] is not None
 
 
-def test_scan_persists_primary_blocker_without_any_setup_and_clears_it(monkeypatch):
+@pytest.mark.parametrize('coverage,detail,code,label', [
+    ('unconfigured', 'CALENDAR_PATH_UNCONFIGURED', 'EVENT_CALENDAR_UNAVAILABLE', 'Event calendar unavailable'),
+    ('invalid', 'CALENDAR_JSON_INVALID', 'EVENT_CALENDAR_INVALID', 'Event calendar invalid'),
+    ('invalid', 'CALENDAR_STALE', 'EVENT_CALENDAR_INVALID', 'Event calendar invalid'),
+    ('invalid', 'CALENDAR_DAY_NOT_COVERED', 'EVENT_CALENDAR_INVALID', 'Event calendar invalid'),
+])
+def test_scan_persists_primary_blocker_without_any_setup_and_clears_it(monkeypatch, coverage, detail, code, label):
     """Exercise the real scan/selector with an in-memory persistence boundary."""
     from datetime import timedelta
     from unittest.mock import MagicMock
@@ -96,10 +102,11 @@ def test_scan_persists_primary_blocker_without_any_setup_and_clears_it(monkeypat
     connection.execute.return_value.fetchall.return_value = []
     service._monitor = lambda: state
     service._process_daily_report = lambda *_: None
-    context = {"coverage": "unconfigured", "risk": "unknown"}
+    context = {"coverage": coverage, "risk": "unknown", "reason_code": detail}
     monkeypatch.setattr("kiwit.banknifty.event_context", lambda _: context)
-    assert service.run_once()["reason_codes"] == ["EVENT_CALENDAR_UNAVAILABLE", "NO_ELIGIBLE_PLAN"]
-    assert state["detail"].startswith("Event calendar unavailable")
+    assert service.run_once()["reason_codes"] == [code, "NO_ELIGIBLE_PLAN"]
+    assert state["detail"].startswith(label)
+    assert detail in state["detail"]
     assert "NO_ELIGIBLE_PLAN" not in state["detail"]
     assert state["strategy_selection"]["shadow_plans"] == []
     context.update(coverage="configured", risk="clear")

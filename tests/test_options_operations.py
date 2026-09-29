@@ -57,6 +57,8 @@ def test_strategy_readiness_distinguishes_no_setup_from_configuration_blocker():
     assert blocked == {
         "status": "degraded",
         "reason_code": "EVENT_CALENDAR_UNAVAILABLE",
+        "detail_code": None,
+        "message": "Event calendar unavailable; configure a readable, current event calendar [EVENT_CALENDAR_UNAVAILABLE]",
         "first_seen_at": (now - timedelta(seconds=70)).isoformat(),
         "duration_seconds": 70,
         "last_scan_at": (now - timedelta(seconds=10)).isoformat(),
@@ -721,3 +723,78 @@ def test_frozen_entry_and_partial_exit_replay_detects_changed_fill(desk):
     entry = next(e for e in bundle['events'] if e['kind'] == 'paper_entry')
     entry['detail']['position']['entry'] = '999'
     assert replay(bundle)['fills'][0]['status'] == 'mismatch'
+
+
+@pytest.mark.parametrize('coverage,detail,reason', [
+    ('unconfigured', 'CALENDAR_PATH_UNCONFIGURED', 'EVENT_CALENDAR_UNAVAILABLE'),
+    ('invalid', 'CALENDAR_JSON_INVALID', 'EVENT_CALENDAR_INVALID'),
+    ('invalid', 'CALENDAR_STALE', 'EVENT_CALENDAR_INVALID'),
+    ('invalid', 'CALENDAR_DAY_NOT_COVERED', 'EVENT_CALENDAR_INVALID'),
+])
+def test_calendar_readiness_matches_entry_status_and_recovers(coverage, detail, reason):
+    from kiwit.options_events import entry_calendar_blocker
+    from kiwit.options_policy import entry_blocker_detail, entry_gate
+
+    context = {'coverage': coverage, 'risk': 'unknown', 'reason_code': detail}
+    gate = entry_gate({'amount': '100000', 'loss_pct': '5', 'profit_pct': '10'}, NOW, [], context)
+    assert gate['calendar_blocker'] == entry_calendar_blocker(context)
+    assert gate['reason_codes'] == [reason, 'NO_ELIGIBLE_PLAN']
+    scans = [(NOW - timedelta(seconds=age), gate['reason_codes'], gate['calendar_blocker'])
+             for age in (10, 70)]
+    scans.append((NOW - timedelta(seconds=130), ['NO_ELIGIBLE_PLAN'], None))
+    result = strategy_readiness(scans, NOW, running=True)
+    assert result['status'] == 'degraded'
+    assert result['reason_code'] == reason
+    assert result['detail_code'] == detail
+    assert result['message'] == entry_blocker_detail(gate)
+    assert result['first_seen_at'] == (NOW - timedelta(seconds=70)).isoformat()
+    assert result['duration_seconds'] == 70
+    recovered = strategy_readiness([(NOW, ['NO_ELIGIBLE_PLAN'], None), *scans], NOW, running=True)
+    assert recovered['status'] == 'ready'
+    assert recovered['reason_code'] is None
+    assert recovered['first_seen_at'] is None
+    assert recovered['duration_seconds'] == 0
+    assert not recovered.get('message')
+
+
+def test_calendar_readiness_restarts_duration_when_specific_cause_changes():
+    scans = [
+        (NOW - timedelta(seconds=10), ['EVENT_CALENDAR_INVALID'], {'detail_code': 'CALENDAR_STALE'}),
+        (NOW - timedelta(seconds=70), ['EVENT_CALENDAR_INVALID'], {'detail_code': 'CALENDAR_JSON_INVALID'}),
+    ]
+    assert strategy_readiness(scans, NOW, running=True)['duration_seconds'] == 10
+    # Historical scans without detail still recognize invalid configuration.
+    historical = strategy_readiness([(NOW, ['EVENT_CALENDAR_INVALID'])], NOW, running=True)
+    assert historical['status'] == 'degraded'
+    assert historical['detail_code'] is None
+
+
+def test_high_impact_window_is_not_configuration_degradation():
+    assert strategy_readiness([(NOW, ['HIGH_IMPACT_EVENT_WINDOW', 'NO_ELIGIBLE_PLAN'])],
+                              NOW, running=True)['status'] == 'ready'
+
+
+@pytest.mark.parametrize('reason,detail', [
+    ('EVENT_CALENDAR_UNAVAILABLE', 'CALENDAR_PATH_UNCONFIGURED'),
+    ('EVENT_CALENDAR_INVALID', 'CALENDAR_JSON_INVALID'),
+    ('EVENT_CALENDAR_INVALID', 'CALENDAR_STALE'),
+    ('EVENT_CALENDAR_INVALID', 'CALENDAR_DAY_NOT_COVERED'),
+])
+def test_diagnostics_calendar_blockers_leave_healthy_liveness_independent(reason, detail):
+    from unittest.mock import MagicMock
+
+    store = MagicMock()
+    store.latest.return_value = {'state': 'running', 'day': str(NOW.astimezone(IST).date())}
+    cursor = store.locked.return_value.__enter__.return_value.execute.return_value
+    cursor.fetchall.side_effect = [
+        [(worker, NOW, 'ok', {}) for worker in ('supervisor', 'observer', 'decision')],
+        [], [], [], [],
+        [(NOW - timedelta(seconds=60), [reason, 'NO_ELIGIBLE_PLAN'], {'detail_code': detail})],
+    ]
+    cursor.fetchone.side_effect = [(0,), (0, 0), (0,), (0, 0), (False,), (0,), None]
+    result = diagnostics(store, NOW)
+    assert result['status'] == 'degraded'
+    assert result['reason_codes'] == [reason]
+    assert result['liveness'] == {'status': 'ok', 'reason_codes': []}
+    assert result['strategy_readiness']['detail_code'] == detail
+    assert result['strategy_readiness']['duration_seconds'] == 60

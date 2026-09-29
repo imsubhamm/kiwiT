@@ -97,10 +97,11 @@
       const readiness = el('bn-readiness');
       const nextAction = el('bn-next-action');
       const degradedStrategy = strategyReadiness?.status === 'degraded';
+      const strategyReason = strategyReadiness?.message || strategyReadiness?.reason_code;
       const blockerAge = degradedStrategy ? `${Math.round(strategyReadiness.duration_seconds)}s` : '';
       const brokerReadiness = data.operations?.broker_readiness;
       const brokerBlocked = brokerReadiness?.status === 'failed';
-      if (readiness) readiness.textContent = brokerBlocked ? (brokerReadiness.message || 'Groww session approval required') : !data.available ? 'Bank Nifty unavailable' : degradedStrategy ? `Strategy readiness degraded · ${strategyReadiness.reason_code} · ${blockerAge}` : s?.state === 'stopping' ? 'Needs attention · session awaiting closure' : s?.state === 'running' ? 'Paper session running · strategy ready' : brokerReadiness?.status === 'ready' ? 'Groww approval and quote ready · paper only' : 'Bank Nifty connected · paper only';
+      if (readiness) readiness.textContent = brokerBlocked ? (brokerReadiness.message || 'Groww session approval required') : !data.available ? 'Bank Nifty unavailable' : degradedStrategy ? `Strategy readiness degraded · ${strategyReason} · ${blockerAge}` : s?.state === 'stopping' ? 'Needs attention · session awaiting closure' : s?.state === 'running' ? 'Paper session running · strategy ready' : brokerReadiness?.status === 'ready' ? 'Groww approval and quote ready · paper only' : 'Bank Nifty connected · paper only';
       if (nextAction) nextAction.textContent = brokerBlocked ? `Open Groww and approve today’s API session. First failure ${brokerReadiness.first_failed_at || 'not recorded'} · ${brokerReadiness.failure_count || 0} failed check${brokerReadiness.failure_count === 1 ? '' : 's'}. This alert clears after a successful read-only quote.` : !data.available ? 'The desk is unavailable. Check service configuration and sync again.' : degradedStrategy ? `The process is live, but new entries are disabled. Blocker first seen ${strategyReadiness.first_seen_at}.` : s?.state === 'stopping' ? 'A previous session must finish before another Run. ' + (s.detail || 'Waiting for position reconciliation.') : s?.state === 'running' ? 'Monitor your position below. Stop & exit requests closure when an executable quote is available.' : 'Review the session details and limits below. The server checks trading eligibility when you request Run.';
 
       renderAnalysis(s?.chart_analysis);
@@ -171,7 +172,7 @@
         lines('bn-operations',[
           `Operational status: ${ops.status} · ${ops.reason_codes.join(', ') || 'No active blockers'}`,
           `Process liveness: ${ops.liveness?.status || 'unknown'} · ${ops.liveness?.reason_codes?.join(', ') || 'Workers healthy'}`,
-          `Strategy readiness: ${strategyReadiness?.status || 'unknown'}${strategyReadiness?.reason_code ? ' · '+strategyReadiness.reason_code+' · first seen '+strategyReadiness.first_seen_at+' · '+Math.round(strategyReadiness.duration_seconds)+'s' : ''}`,
+          `Strategy readiness: ${strategyReadiness?.status || 'unknown'}${strategyReadiness?.reason_code ? ' · '+strategyReason+' · first seen '+strategyReadiness.first_seen_at+' · '+Math.round(strategyReadiness.duration_seconds)+'s' : ''}`,
           ...(broker ? [`Groww readiness: ${broker.status.toUpperCase()} · ${broker.reason_code || 'READ_ONLY_CHECK_OK'} · failed checks ${broker.failure_count} · first failure ${broker.first_failed_at || 'none'} · recovered ${broker.recovered_at || 'not yet'}`] : []),
           ...(ops.security_notices || []).map(notice=>`Notice: ${notice}`),
           `Recovery trades excluded from intraday results: ${ops.recovery_trades} · P&L ₹${ops.recovery_pnl}`,

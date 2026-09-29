@@ -164,3 +164,27 @@ test('failed Stop remains recoverable and does not automatically retry a mutatio
  assert.equal(attempts,1);assert.equal(nodes['bn-stop'].disabled,false);
  assert.equal(nodes['bn-run'].disabled,true);assert.match(nodes['bn-detail'].textContent,/Sync to confirm/);
 });
+
+test('invalid calendar shows actionable cause, age and recovery across dashboard',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  const message='Event calendar invalid; repair or refresh the configured calendar [EVENT_CALENDAR_INVALID] (CALENDAR_STALE)';
+  data.session={state:'running',detail:message,entries:0,position:null};
+  data.operations={status:'degraded',reason_codes:['EVENT_CALENDAR_INVALID'],workers:{},funnel:{},
+    rejection_counts:[],liveness:{status:'ok',reason_codes:[]},
+    strategy_readiness:{status:'degraded',reason_code:'EVENT_CALENDAR_INVALID',detail_code:'CALENDAR_STALE',message,
+      first_seen_at:'2026-09-11T04:55:00Z',duration_seconds:300}};
+  timers[0]();await settle();
+  assert.ok(nodes['bn-readiness'].textContent.includes(message));
+  assert.match(nodes['bn-readiness'].textContent,/300s/);
+  assert.match(nodes['bn-next-action'].textContent,/2026-09-11T04:55:00Z/);
+  const operations=nodes['bn-operations'].children.map(n=>n.textContent).join('\n');
+  assert.ok(operations.includes(message));
+  assert.match(operations,/Process liveness: ok/);
+  data.session.detail='No eligible entry plan; waiting for a supported setup [NO_ELIGIBLE_PLAN]';
+  data.operations.status='ok';data.operations.reason_codes=[];
+  data.operations.strategy_readiness={status:'ready',reason_code:null,first_seen_at:null,duration_seconds:0};
+  timers[0]();await settle();
+  assert.match(nodes['bn-readiness'].textContent,/strategy ready/);
+  assert.doesNotMatch(nodes['bn-readiness'].textContent,/CALENDAR/);
+  assert.doesNotMatch(nodes['bn-next-action'].textContent,/first seen/);
+});

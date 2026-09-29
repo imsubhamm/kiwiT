@@ -5,8 +5,9 @@ from uuid import uuid4
 
 from .intraday import IST
 from .options_calendar import regular_session
+from .options_events import CALENDAR_CONFIGURATION_BLOCKERS, calendar_blocker_message
 
-STRATEGY_CONFIGURATION_BLOCKERS = frozenset({"EVENT_CALENDAR_UNAVAILABLE"})
+STRATEGY_CONFIGURATION_BLOCKERS = CALENDAR_CONFIGURATION_BLOCKERS
 
 
 def decision_reason_codes(worker, *, running, local):
@@ -33,7 +34,9 @@ def strategy_readiness(scans, now, *, running):
             "duration_seconds": 0,
             "last_scan_at": None,
         }
-    last_scan_at, latest_reasons = scans[0]
+    last_scan_at, latest_reasons = scans[0][:2]
+    calendar = scans[0][2] if len(scans[0]) > 2 else None
+    detail_code = (calendar or {}).get("detail_code")
     active = sorted(STRATEGY_CONFIGURATION_BLOCKERS.intersection(latest_reasons or []))
     if not active:
         return {
@@ -45,13 +48,17 @@ def strategy_readiness(scans, now, *, running):
         }
     reason = active[0]
     first_seen = last_scan_at
-    for observed_at, reason_codes in scans[1:]:
-        if reason not in (reason_codes or []):
+    for scan in scans[1:]:
+        observed_at, reason_codes = scan[:2]
+        previous_calendar = scan[2] if len(scan) > 2 else None
+        if reason not in (reason_codes or []) or (previous_calendar or {}).get("detail_code") != detail_code:
             break
         first_seen = observed_at
     return {
         "status": "degraded",
         "reason_code": reason,
+        "detail_code": detail_code,
+        "message": calendar_blocker_message(reason, detail_code),
         "first_seen_at": first_seen.isoformat(),
         "duration_seconds": max(0, int((now - first_seen).total_seconds())),
         "last_scan_at": last_scan_at.isoformat(),
@@ -151,7 +158,8 @@ def diagnostics(store, now):
             "WHERE trading_date=%s ORDER BY COALESCE(closed_at,last_seen_at) DESC LIMIT 10", (day,),
         ).fetchall()
         scans = connection.execute(
-            "SELECT event_at,detail->'entry_gate'->'reason_codes' FROM banknifty_events "
+            "SELECT event_at,detail->'entry_gate'->'reason_codes',"
+            "detail->'entry_gate'->'calendar_blocker' FROM banknifty_events "
             "WHERE trading_date=%s AND kind='strategy_scan' "
             "ORDER BY event_at DESC,event_id DESC LIMIT 500",
             (day,),

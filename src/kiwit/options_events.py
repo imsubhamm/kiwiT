@@ -13,6 +13,16 @@ from .intraday import IST
 CALENDAR_VERSION = "event-calendar-v2"
 MAX_CALENDAR_AGE = timedelta(days=7)
 ALLOWED_IMPACTS = frozenset({"low", "medium", "high"})
+CALENDAR_CONFIGURATION_MESSAGES = {
+    "EVENT_CALENDAR_INVALID": "Event calendar invalid; repair or refresh the configured calendar",
+    "EVENT_CALENDAR_UNAVAILABLE": "Event calendar unavailable; configure a readable, current event calendar",
+}
+CALENDAR_CONFIGURATION_BLOCKERS = frozenset(CALENDAR_CONFIGURATION_MESSAGES)
+
+
+def calendar_blocker_message(reason_code: str, detail_code: str | None = None) -> str:
+    message = CALENDAR_CONFIGURATION_MESSAGES[reason_code]
+    return f"{message} [{reason_code}]" + (f" ({detail_code})" if detail_code else "")
 
 
 def entry_calendar_blocker(context: dict | None) -> dict | None:

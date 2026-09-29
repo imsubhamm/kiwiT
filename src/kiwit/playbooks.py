@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal as D
 
 from .chart_analysis import VERSION as CHART_VERSION
+from .options_events import entry_calendar_blocker
 from .options_risk import cost_breakdown, exit_levels, fill_price, quantity_for, sizing_diagnostics, trade_limits
 
 VERSION = "banknifty-selector-v5-cost-aware"
@@ -194,15 +195,8 @@ def select_plans(snapshot, state, now):
         "shadow_plans": [],
     }
     events = snapshot.get("event_context") or {}
-    calendar_reason = (
-        "EVENT_CALENDAR_INVALID"
-        if events.get("coverage") == "invalid"
-        else "EVENT_CALENDAR_UNAVAILABLE"
-        if events.get("coverage") != "configured"
-        else "HIGH_IMPACT_EVENT_WINDOW"
-        if events.get("risk") != "clear"
-        else None
-    )
+    calendar = entry_calendar_blocker(events)
+    calendar_reason = calendar["reason_code"] if calendar else None
     for playbook in PLAYBOOKS:
         patterns = sorted(
             (p for p in analysis.get("patterns", []) if p.get("name") == playbook["pattern"]),
