@@ -719,6 +719,9 @@ def test_entry_cap_keeps_shadow_scans_without_paid_ai(desk):
     status = service.status()
     assert result["state"] == "shadow_scan" and "DAILY_ENTRY_CAP" in result["reason_codes"]
     assert status["session"]["state"] == "running" and analyst.calls == 0
+    scan = next(event for event in status["events"] if event["kind"] == "strategy_scan")
+    assert scan["detail"]["measurement_context"]["capital"] == "100000"
+    assert scan["detail"]["entry_gate"]["allowed"] is False
     assert any(event["kind"] == "strategy_scan" and event["detail"]["mode"] == "shadow"
                for event in status["events"])
 
