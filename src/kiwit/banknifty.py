@@ -1259,6 +1259,8 @@ class BankNiftyService:
                                        reason="calendar_blocked_shadow")
                 self.store.event(connection, current, "strategy_scan", {
                     **selection, "entry_gate": gate, "decision_event": trigger,
+                    "measurement_context": {"capital": str(current["amount"])},
+                    "provenance": snapshot.get("provenance", {}),
                     "mode": "executable" if gate["allowed"] else "shadow",
                 })
                 recent = connection.execute(

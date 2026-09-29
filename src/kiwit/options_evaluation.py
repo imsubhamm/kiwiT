@@ -138,76 +138,153 @@ def compare(bundle, *, horizon_minutes=15, extra_bps=0):
 
 
 def _measurable_opportunities(bundle):
-    for call in bundle.get('calls', []):
-        result = call.get('result') or {}
-        at_value = result.get('settled_at')
-        snapshot = call.get('snapshot', {})
-        if not at_value:
+    """One occurrence per selection time and frozen plan, preferring scan evidence.
+
+    A later scan of the same plan is a separate observation. A paid call copying
+    that selection is not. These records never confer execution authority.
+    """
+    # Legacy scans did not retain capital. Recover only from the exact frozen
+    # selection in a snapshot, never from a later session balance.
+    contexts = {}
+    snapshots = [(c.get('snapshot') or {}, c.get('trading_date'), 'ai_snapshot')
+                 for c in bundle.get('calls', [])]
+    snapshots += [(r.get('market_snapshot') or {}, r.get('trading_date'), 'market_snapshot')
+                  for r in bundle.get('market_tape', [])]
+    for snapshot, day, source in snapshots:
+        selection = snapshot.get('strategy_selection') or {}
+        if snapshot.get('capital') is None:
             continue
-        for plan in snapshot.get('strategy_selection', {}).get('plans', []):
-            yield {'at': stamp(at_value), 'day': str(call['trading_date']),
-                   'capital': D(str(snapshot['capital'])), 'plan': plan, 'source': 'ai_call'}
+        for plan in selection.get('plans', []) + selection.get('shadow_plans', []):
+            key = (str(day), selection.get('at'), plan['id'])
+            contexts[key] = {'capital': snapshot['capital'], 'source': source}
+    records = []
     for event in bundle.get('events', []):
         if event.get('kind') != 'strategy_scan':
             continue
         detail = event.get('detail') or {}
-        for plan in detail.get('shadow_plans', []):
-            context = plan.get('measurement_context') or {}
-            if context.get('capital') is None or not event.get('event_at'):
-                continue
-            yield {'at': stamp(event['event_at']), 'day': str(event['trading_date']),
-                   'capital': D(str(context['capital'])), 'plan': plan, 'source': 'calendar_shadow'}
+        for field, source in (('plans', 'strategy_scan'), ('shadow_plans', 'calendar_shadow')):
+            for plan in detail.get(field, []):
+                records.append((detail, plan, event.get('event_at'), event.get('trading_date'),
+                                detail.get('measurement_context') or plan.get('measurement_context') or
+                                contexts.get((str(event.get('trading_date')), detail.get('at'), plan['id']), {}),
+                                source, str(event.get('event_id', ''))))
+    for call in bundle.get('calls', []):
+        snapshot = call.get('snapshot') or {}
+        selection = snapshot.get('strategy_selection') or {}
+        for plan in selection.get('plans', []):
+            records.append(({**selection, 'entry_gate': snapshot.get('entry_gate', {}),
+                             'provenance': snapshot.get('provenance', {})}, plan,
+                            (call.get('result') or {}).get('settled_at'), call.get('trading_date'),
+                            {'capital': snapshot.get('capital')}, 'ai_call', str(call.get('call_id', ''))))
+    seen = set()
+    for selection, plan, available, day, context, source, source_id in records:
+        occurrence_at = selection.get('at') or (available if source != 'ai_call' else None) or plan.get('created_at')
+        identity = fingerprint({'day': str(day), 'at': occurrence_at, 'plan_id': plan['id']})
+        if identity in seen:
+            continue
+        seen.add(identity)
+        reason = None
+        try:
+            at = stamp(available)
+        except (ValueError, TypeError):
+            at = None
+            reason = 'availability_time_missing_or_invalid'
+        try:
+            capital = D(str(context.get('capital')))
+            if not capital.is_finite() or capital <= 0:
+                raise ValueError('Invalid capital')
+        except (ArithmeticError, ValueError):
+            capital = None
+            reason = reason or 'capital_missing_or_invalid'
+        gate = selection.get('entry_gate') or {}
+        yield {'occurrence_id': identity, 'at': at, 'day': str(day), 'capital': capital,
+               'plan': plan, 'source': source, 'source_id': source_id,
+               'available_at': available, 'selection_at': occurrence_at,
+               'capital_source': context.get('source', source),
+               'entry_gate': gate, 'provenance': selection.get('provenance', {}),
+               'block_reason_codes': sorted(set(gate.get('reason_codes', []) + plan.get('block_reason_codes', []))),
+               'evidence_only': True, 'execution_eligible': False, 'excluded_reason': reason}
+
+
+def _opportunity_outcome(item, bundle, horizon):
+    if item['excluded_reason']:
+        return {'status': 'excluded', 'reason': item['excluded_reason']}
+    return counterfactual(item['plan'], bundle.get('market_tape', []), item['at'], horizon)
+
+
+def _opportunity_evidence(item, outcome):
+    return {key: value for key, value in item.items() if key not in ('at', 'capital', 'plan', 'excluded_reason')} | {
+        'plan_id': item['plan']['id'], 'playbook_id': item['plan']['playbook_id'], 'outcome': outcome}
 
 
 def rule_matrix(bundle, *, horizon_minutes=15):
     """Apply cap/loss scenarios to the same observed opportunity stream."""
-    opportunities = []
+    if not 1 <= horizon_minutes <= 60:
+        raise ValueError('Horizon 1–60 minutes required')
+    opportunities, evidence = [], []
     for item in _measurable_opportunities(bundle):
-        observed = counterfactual(item['plan'], bundle.get('market_tape', []), item['at'], horizon_minutes)
+        observed = _opportunity_outcome(item, bundle, horizon_minutes)
+        evidence.append(_opportunity_evidence(item, observed))
         if observed['status'] == 'observed':
-            opportunities.append({'at': item['at'], 'day': item['day'], 'capital': item['capital'],
-                                  'net_pnl': D(observed['net_pnl']), 'source': item['source']})
-    opportunities.sort(key=lambda row: row['at'])
+            opportunities.append({**item, 'net_pnl': D(observed['net_pnl'])})
+    opportunities.sort(key=lambda row: (row['at'], row['occurrence_id']))
     rows = []
     for cap in (4, 6, 10):
         for loss_pct in (2, 3, 5):
-            daily = {}
-            selected = []
+            daily, selected, exclusions = {}, [], []
+            for row in evidence:
+                if row['outcome']['status'] != 'observed':
+                    exclusions.append({'occurrence_id': row['occurrence_id'], 'reason': row['outcome']['reason']})
             for item in opportunities:
                 state = daily.setdefault(item['day'], {'entries': 0, 'pnl': D(0)})
-                if state['entries'] >= cap or state['pnl'] <= -item['capital'] * D(loss_pct) / 100:
+                reason = ('scenario_entry_cap' if state['entries'] >= cap else
+                          'scenario_daily_loss' if state['pnl'] <= -item['capital'] * D(loss_pct) / 100 else None)
+                if reason:
+                    exclusions.append({'occurrence_id': item['occurrence_id'], 'reason': reason})
                     continue
                 state['entries'] += 1
                 state['pnl'] += item['net_pnl']
                 selected.append(item)
             rows.append({'entry_cap': cap, 'daily_loss_pct': loss_pct, 'observed_opportunities': len(selected),
+                         'attempted': len(evidence), 'included': len(selected), 'excluded': len(exclusions),
+                         'exclusions': exclusions,
                          'net_pnl': str(sum((item['net_pnl'] for item in selected), D(0)))})
     return {'format': 'options-rule-matrix-v1', 'horizon_minutes': horizon_minutes,
-            'observed_opportunities': len(opportunities), 'scenarios': rows,
+            'attempted': len(evidence), 'included': len(opportunities),
+            'excluded': len(evidence) - len(opportunities), 'opportunities': evidence,
+            'observed_opportunities': len(opportunities), 'scenarios': rows, 'promotion_eligible': False,
             'limitations': ['Sequential fixed-horizon opportunities may overlap; this compares rules, not portfolio returns',
                             'Missing contract quotes remain excluded and are never imputed']}
 
 
 def exit_matrix(bundle):
     """Compare playbook-specific holding horizons on identical retained quotes."""
-    groups = {}
+    groups, evidence = {}, []
     total = excluded = 0
     for item in _measurable_opportunities(bundle):
         plan = item['plan']
         for horizon in plan.get('exit_experiments', {}).get('max_hold_minutes', []):
             total += 1
-            observed = counterfactual(plan, bundle.get('market_tape', []), item['at'], horizon)
+            observed = _opportunity_outcome(item, bundle, horizon)
+            evidence.append({**_opportunity_evidence(item, observed), 'horizon_minutes': horizon})
             key = (plan['playbook_id'], horizon)
             group = groups.setdefault(key, {'playbook_id': key[0], 'horizon_minutes': horizon,
-                                            'observations': 0, 'net_pnl': D(0)})
+                                            'attempted': 0, 'included': 0, 'excluded': 0,
+                                            'exclusion_reasons': {}, 'observations': 0, 'net_pnl': D(0)})
+            group['attempted'] += 1
             if observed['status'] != 'observed':
                 excluded += 1
+                group['excluded'] += 1
+                reasons = group['exclusion_reasons']
+                reasons[observed['reason']] = reasons.get(observed['reason'], 0) + 1
                 continue
+            group['included'] += 1
             group['observations'] += 1
             group['net_pnl'] += D(observed['net_pnl'])
     rows = [{**value, 'net_pnl': str(value['net_pnl'])} for value in groups.values()]
-    return {'format': 'options-exit-matrix-v1', 'attempted': total, 'excluded': excluded, 'scenarios': rows,
-            'promotion_eligible': False}
+    return {'format': 'options-exit-matrix-v1', 'attempted': total, 'included': total - excluded,
+            'excluded': excluded, 'scenarios': rows, 'opportunities': evidence, 'promotion_eligible': False,
+            'limitations': ['Overlapping fixed-horizon opportunity studies; not portfolio returns']}
 
 
 def cost_reconciliation(bundle):
