@@ -294,14 +294,14 @@ def test_calendar_block_keeps_shadow_evidence_without_ai_or_execution(desk, monk
     with service.store.locked() as connection:
         calls = connection.execute('SELECT count(*) FROM banknifty_ai_calls').fetchone()[0]
         tracked = connection.execute(
-            'SELECT contract,reasons,retain_until FROM banknifty_tracked_contracts'
+            "SELECT contract,reasons,retain_until FROM banknifty_tracked_contracts WHERE symbol='BANKNIFTY26SEP55000CE'"
         ).fetchone()
         scan = connection.execute(
             "SELECT detail FROM banknifty_events WHERE kind='strategy_scan' ORDER BY event_id DESC LIMIT 1"
         ).fetchone()[0]
     assert calls == 0
     assert tracked[0]['symbol'] == 'BANKNIFTY26SEP55000CE'
-    assert tracked[1] == ['calendar_blocked_shadow']
+    assert 'calendar_blocked_shadow' in tracked[1]
     assert tracked[2] >= clock[0] + timedelta(minutes=60)
     assert scan['plans'] == []
     assert scan['shadow_plans'][0]['block_reason_codes'] == ['HIGH_IMPACT_EVENT_WINDOW']

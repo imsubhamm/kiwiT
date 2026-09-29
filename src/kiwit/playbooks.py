@@ -7,6 +7,7 @@ from decimal import Decimal as D
 
 from .chart_analysis import VERSION as CHART_VERSION
 from .options_events import entry_calendar_blocker
+from .options_retention import retention_window
 from .options_risk import cost_breakdown, exit_levels, fill_price, quantity_for, sizing_diagnostics, trade_limits
 
 VERSION = "banknifty-selector-v5-cost-aware"
@@ -327,7 +328,7 @@ def select_plans(snapshot, state, now):
                             "round_trip_at_target": str(exits["estimated_round_trip_cost"]),
                             "cost_share_of_gross_reward": str(exits["cost_share_of_gross_reward"]),
                         },
-                        "measurement_context": {"capital": str(state["amount"]), "retention_minutes": 60},
+                        "measurement_context": {"capital": str(state["amount"]), "retention_minutes": retention_window().total_seconds() / 60},
                     })
                     chosen["decision_context"].update(
                         plan_valid_now=False,

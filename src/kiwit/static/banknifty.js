@@ -174,6 +174,11 @@
           `Process liveness: ${ops.liveness?.status || 'unknown'} · ${ops.liveness?.reason_codes?.join(', ') || 'Workers healthy'}`,
           `Strategy readiness: ${strategyReadiness?.status || 'unknown'}${strategyReadiness?.reason_code ? ' · '+strategyReason+' · first seen '+strategyReadiness.first_seen_at+' · '+Math.round(strategyReadiness.duration_seconds)+'s' : ''}`,
           ...(broker ? [`Groww readiness: ${broker.status.toUpperCase()} · ${broker.reason_code || 'READ_ONLY_CHECK_OK'} · failed checks ${broker.failure_count} · first failure ${broker.first_failed_at || 'none'} · recovered ${broker.recovered_at || 'not yet'}`] : []),
+          ...(ops.tracking_coverage ? [
+            `Quote retention: ${ops.tracking_coverage.required_count} required · capacity ${ops.tracking_coverage.capacity} · overflow ${ops.tracking_coverage.overflow_count} · ${ops.tracking_coverage.policy}`,
+            `Capacity exclusions: ${ops.tracking_coverage.overflow_symbols.join(', ') || 'none'}`,
+            ...Object.entries(ops.tracking_coverage.classes).map(([name,c])=>`${name}: ${c.observed_count}/${c.required_count} quotes observed · missing ${c.missing_symbols.join(', ') || 'none'}`)
+          ] : []),
           ...(ops.security_notices || []).map(notice=>`Notice: ${notice}`),
           `Recovery trades excluded from intraday results: ${ops.recovery_trades} · P&L ₹${ops.recovery_pnl}`,
           ...Object.entries(ops.workers || {}).map(([name,w])=>`${name}: ${w.status} · ${Math.round(w.age_seconds)}s ago`),
