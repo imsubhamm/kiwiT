@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timedelta
 from decimal import Decimal as D
 
+from .options_events import CALENDAR_CONFIGURATION_MESSAGES, calendar_blocker_message, entry_calendar_blocker
 from .options_risk import session_limit_reached
 
 ENTRY_CAP = 10
@@ -19,8 +20,7 @@ MAX_EVENT_ATTEMPTS = 3
 ENTRY_BLOCKER_MESSAGES = {
     "SESSION_PNL_LIMIT": "Session P&L limit reached; new entries disabled",
     "DAILY_ENTRY_CAP": "Daily entry cap reached; new entries disabled",
-    "EVENT_CALENDAR_INVALID": "Event calendar invalid; repair or refresh the configured calendar",
-    "EVENT_CALENDAR_UNAVAILABLE": "Event calendar unavailable; configure a readable, current event calendar",
+    **CALENDAR_CONFIGURATION_MESSAGES,
     "HIGH_IMPACT_EVENT_WINDOW": "High-impact event window active; waiting for event risk to clear",
     "ONE_POSITION_ACTIVE": "Existing position active; waiting for it to close",
     "POST_EXIT_COOLDOWN": "Post-exit cooldown active; waiting before the next entry",
@@ -40,7 +40,13 @@ def entry_blocker_detail(gate: dict) -> str | None:
         return None
     if len(reasons) > 1 and "NO_ELIGIBLE_PLAN" in reasons:
         reasons.remove("NO_ELIGIBLE_PLAN")
-    return "; ".join(f"{ENTRY_BLOCKER_MESSAGES.get(code, 'Entry blocked')} [{code}]" for code in reasons)
+    calendar = gate.get("calendar_blocker") or {}
+    return "; ".join(
+        calendar_blocker_message(code, calendar.get("detail_code"))
+        if code in CALENDAR_CONFIGURATION_MESSAGES
+        else f"{ENTRY_BLOCKER_MESSAGES.get(code, 'Entry blocked')} [{code}]"
+        for code in reasons
+    )
 
 
 
@@ -61,17 +67,15 @@ def entry_gate(state: dict, now: datetime, plans: list[dict], event_context: dic
             reasons.append("POST_EXIT_COOLDOWN")
     if not plans and not state.get("position"):
         reasons.append("NO_ELIGIBLE_PLAN")
-    events = event_context or {}
+    calendar = None
     if event_context is not None and not state.get("position"):
-        if events.get("coverage") == "invalid":
-            reasons.append("EVENT_CALENDAR_INVALID")
-        elif events.get("coverage") != "configured":
-            reasons.append("EVENT_CALENDAR_UNAVAILABLE")
-        elif events.get("risk") != "clear":
-            reasons.append("HIGH_IMPACT_EVENT_WINDOW")
+        calendar = entry_calendar_blocker(event_context)
+        if calendar:
+            reasons.append(calendar["reason_code"])
     return {
         "allowed": not reasons,
         "reason_codes": ordered_entry_reasons(reasons),
+        "calendar_blocker": calendar,
         "cooldown_remaining_seconds": remaining,
         "entry_cap": ENTRY_CAP,
         "entries_remaining": max(0, ENTRY_CAP - int(state.get("entries", 0))),
