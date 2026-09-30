@@ -131,18 +131,104 @@ def quantity_for(state, contract, quote):
     return max(0, units // contract["lot"] * contract["lot"])
 
 
+def _budget_units(budget, per_unit, fixed):
+    if per_unit <= 0:
+        return 0
+    return int(max(D(0), budget - fixed) / per_unit)
+
+
 def sizing_diagnostics(state, contract, quote):
-    """Explain infeasible whole-lot sizing without changing risk authority."""
+    """Explain whole-lot sizing without changing quantity_for."""
     fill = fill_price(quote, contract, True)
-    notional = fill * contract['lot']
+    amount, cash = D(state["amount"]), D(state["cash"])
     stop_pct = trade_limits(state)[0] / 100
+    daily_fraction = D(state["loss_pct"]) / 100
+    realized = D(state.get("realized_pnl", "0"))
+    entry_unit = fill * (1 + BUY_VARIABLE_RATE)
+    risk_unit = fill * (stop_pct + BUY_VARIABLE_RATE + SELL_VARIABLE_RATE)
+    notional = fill * contract["lot"]
     planned_risk = notional * (stop_pct + BUY_VARIABLE_RATE + SELL_VARIABLE_RATE) + 2 * FIXED_ORDER_COST
-    daily_fraction = D(state['loss_pct']) / 100
     required = max((notional * (1 + BUY_VARIABLE_RATE) + FIXED_ORDER_COST) / ALLOCATION_FRACTION,
                    planned_risk / PLANNED_RISK_FRACTION, planned_risk / daily_fraction)
-    return {'whole_lot_quantity': quantity_for(state, contract, quote),
-            'minimum_initial_capital_estimate': str(required.quantize(D('.01'), rounding=ROUND_CEILING)),
-            'minimum_cash': str(notional * (1 + BUY_VARIABLE_RATE) + FIXED_ORDER_COST),
-            'lot': contract['lot'], 'planned_lot_risk': str(planned_risk),
-            'displayed_bid_units': quote['bid_size'], 'displayed_ask_units': quote['ask_size'],
-            'note': 'Estimate before realized losses, gaps and liquidity changes; not a guaranteed loss cap'}
+    budgets = {
+        "allocation": amount * ALLOCATION_FRACTION,
+        "cash": cash,
+        "planned_risk": amount * PLANNED_RISK_FRACTION,
+        "remaining_daily_risk": max(D(0), amount * daily_fraction + realized),
+    }
+    fixed_by_code = {
+        "allocation": FIXED_ORDER_COST,
+        "cash": FIXED_ORDER_COST,
+        "planned_risk": 2 * FIXED_ORDER_COST,
+        "remaining_daily_risk": 2 * FIXED_ORDER_COST,
+    }
+    descriptions = {
+        "allocation": "25% premium allocation",
+        "cash": "available paper cash",
+        "planned_risk": "1% of capital at the planned stop",
+        "remaining_daily_risk": "remaining session loss budget",
+        "ask_depth": "displayed ask size",
+        "bid_depth": "displayed bid size",
+        "freeze_limit": "exchange freeze quantity minus one",
+    }
+    capacities = [
+        ("allocation", _budget_units(budgets["allocation"], entry_unit, fixed_by_code["allocation"])),
+        ("cash", _budget_units(budgets["cash"], entry_unit, fixed_by_code["cash"])),
+        ("planned_risk", _budget_units(budgets["planned_risk"], risk_unit, fixed_by_code["planned_risk"])),
+        ("remaining_daily_risk", _budget_units(
+            budgets["remaining_daily_risk"], risk_unit, fixed_by_code["remaining_daily_risk"])),
+        ("ask_depth", int(quote["ask_size"])),
+        ("bid_depth", int(quote["bid_size"])),
+        ("freeze_limit", int(contract["freeze"]) - 1),
+    ]
+    raw_units = min(capacity for _, capacity in capacities)
+    lot = int(contract["lot"])
+    binding_codes = [code for code, capacity in capacities if capacity == raw_units]
+    fee_limited = [
+        code for code in binding_codes
+        if code in fixed_by_code and budgets[code] <= fixed_by_code[code]
+    ]
+    binding = (["fee_reserve"] if fee_limited else []) + binding_codes
+    observed = {
+        **{code: str(budgets[code]) for code in budgets},
+        "ask_depth": str(quote["ask_size"]),
+        "bid_depth": str(quote["bid_size"]),
+        "freeze_limit": str(int(contract["freeze"]) - 1),
+        "fee_reserve": str(FIXED_ORDER_COST),
+    }
+    constraints = [
+        {
+            "code": code,
+            "unit_capacity": capacity,
+            "whole_lot_capacity": max(0, capacity // lot * lot),
+            "binding": code in binding,
+            "observed": observed[code],
+            "limit": descriptions[code],
+        }
+        for code, capacity in capacities
+    ]
+    if fee_limited:
+        constraints.insert(0, {
+            "code": "fee_reserve",
+            "unit_capacity": 0,
+            "whole_lot_capacity": 0,
+            "binding": True,
+            "observed": str(min(budgets[code] for code in fee_limited)),
+            "limit": "fixed order cost reserved before a lot can be bought",
+        })
+    return {
+        "symbol": contract["symbol"],
+        "whole_lot_quantity": quantity_for(state, contract, quote),
+        "binding_constraint": binding[0],
+        "binding_constraints": binding,
+        "constraints": constraints,
+        "lot_blocks_whole_lot": 0 < raw_units < lot,
+        "minimum_initial_capital_estimate": str(required.quantize(D(".01"), rounding=ROUND_CEILING)),
+        "minimum_cash": str(notional * (1 + BUY_VARIABLE_RATE) + FIXED_ORDER_COST),
+        "lot": contract["lot"],
+        "planned_lot_risk": str(planned_risk),
+        "displayed_bid_units": quote["bid_size"],
+        "displayed_ask_units": quote["ask_size"],
+        "guaranteed_loss_cap": False,
+        "note": "Estimate before later losses, gaps and liquidity changes; not a guaranteed loss cap",
+    }

@@ -109,7 +109,11 @@
       const stale=!selection || Date.now()-Date.parse(selection.at)>180000 || Date.parse(selection.at)>Date.now();
       el('bn-selector-status').textContent=selection ? `${selection.version} · ${selection.at} · ${stale ? 'STALE — historical display only' : s.position ? 'Position monitoring — no additional entry' : selection.plans.length ? 'Eligible plans — AI may select or HOLD' : 'Waiting — no eligible setup'}` : 'No scan yet. Start a paper session during market hours.';
       const names=Object.fromEntries((data.playbooks || []).map(p=>[p.id,p.name]));
-      lines('bn-playbooks',(selection?.evaluations || []).map(e=>`${names[e.playbook_id] || e.playbook_id}: ${e.eligible ? 'ELIGIBLE' : 'WAIT'} · ${e.reasons.join('; ')}`));
+      lines('bn-playbooks',(selection?.evaluations || []).map(e=>{
+        const sizing=(e.sizing || []).map(item=>`${item.symbol}: binding ${item.binding_constraint} · minimum capital ₹${item.minimum_initial_capital_estimate} · cash for one lot ₹${item.minimum_cash} · ${item.note}`).join(' | ');
+        const omitted=e.sizing_omitted ? ` · ${e.sizing_omitted} more contracts omitted` : '';
+        return `${names[e.playbook_id] || e.playbook_id}: ${e.eligible ? 'ELIGIBLE' : 'WAIT'} · ${e.reasons.join('; ')}${sizing ? ' · '+sizing : ''}${omitted}`;
+      }));
       lines('bn-entry-plans',(selection?.plans || []).map(p=>`${names[p.playbook_id] || p.playbook_id} · ${p.symbol} × ${p.quantity} · ${Date.parse(p.expires_at)<=Date.now() ? 'EXPIRED' : 'Expires '+p.expires_at} · Trigger ${p.underlying_trigger} · Invalidation ${p.underlying_invalidation} · Chase bound ${p.underlying_max_chase} · Max premium fill ₹${p.max_fill} · Cost-aware stop/target ₹${p.planned_stop} / ₹${p.planned_target} · Net reward ${p.cost_aware_exit?.net_reward_r || '—'}R · Max hold ${p.max_hold_minutes}m · Plan ${p.id}`));
       const active=s?.position?.entry_plan;
       el('bn-active-plan').textContent=active ? `ACTIVE · ${names[active.playbook_id] || active.playbook_id} · ${s.position.contract.symbol} · Cost-aware premium stop ₹${s.position.stop} · target ₹${s.position.target} · Exit deadline ${s.position.exit_deadline || 'unavailable'} · Underlying invalidation ${active.underlying_invalidation}` : 'No open position with a selected playbook.';
