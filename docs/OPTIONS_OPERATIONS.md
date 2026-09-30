@@ -51,15 +51,62 @@ entry; add the verified next-year calendar before year-end. Special-session time
 must be implemented and reviewed before trading those sessions. Review exchange
 amendments; this bundled calendar does not fetch notices automatically.
 
-## Evidence and recovery
+## Active selector, sizing and exits
 
-Selector v3/playbooks v3 retain the deliberately chosen no-fixed-holding-deadline
-policy. Premium, underlying invalidation, operator, halt and end-of-day exits stay
-active. A versioned experiment fingerprint includes model/provider/prompt/schema,
-sizing, selector and exit policy. The release SHA remains on every record for
-provenance but does not split otherwise compatible strategy evidence. Learning includes only closed, same-day
-trades from the exact experiment. Legacy unbound records remain visible but are not
-used to improve the current experiment's learning statistics.
+The live paper desk is selector `banknifty-selector-v5-cost-aware`, exit policy
+`playbook_cost_aware_v5`, sizing `options-sizing-v3`, cost model
+`groww-nse-equity-options-2026-04-01` and prompt `banknifty-prompt-v3`. Catalogue
+formulas live in [BANKNIFTY_PLAYBOOKS.md](BANKNIFTY_PLAYBOOKS.md). These playbooks
+are unvalidated paper experiments. Live broker orders stay disabled.
+
+Each new paper entry stores `exit_deadline` at fill time plus that playbook's
+maximum hold. The supervisor is the execution authority. On a fresh option quote
+it closes, in order, for session halt, disable or the 15:15 IST flatten
+(`session_stop`), a pending exit, premium stop, premium target, a fresh
+post-entry underlying candle through plan invalidation, then `playbook_time_exit`
+once `now` reaches `exit_deadline`. A stale or missing option quote does not
+invent a price or a time exit. AI EXIT stays advisory and does not close the
+position. Positions that have no `exit_deadline` keep stop, target, halt and
+end-of-day handling only.
+
+Live holds, versioned stops and net reward multiples:
+
+| Playbook | Maximum hold | Stop | Target floor | Net reward |
+| --- | --- | --- | --- | --- |
+| opening_range_breakout_v5 | 30 minutes | 4% | 8% | 1.5R |
+| breakout_retest_v5 | 45 minutes | 4% | 8% | 2R |
+| trend_pullback_v5 | 30 minutes | 3.5% | 7% | 1.5R |
+| range_reversal_v5 | 20 minutes | 3% | 6% | 1.25R |
+| previous_day_breakout_v5 | 45 minutes | 4% | 8% | 2R |
+| engulfing_reversal_v5 | 20 minutes | 3% | 6% | 1.25R |
+| hammer_reversal_v5 | 20 minutes | 3% | 6% | 1.5R |
+| shooting_star_reversal_v5 | 20 minutes | 3% | 6% | 1.5R |
+
+The session trade stop and target can only tighten those percentages. Stops and
+targets are taken from the actual simulated fill. A plan is rejected when
+estimated round-trip costs exceed 35% of planned gross reward. Sizing allows at
+most 25% premium allocation and 1% of initial capital as planned risk, then the
+remaining daily loss budget, and it buys whole lots only. These are hypotheses,
+not guaranteed loss caps. `exit_experiments` horizons are counterfactual
+evaluation windows. They are not the live deadline.
+
+The experiment fingerprint covers provider, model, prompt, schema, sizing,
+selector, exit policy, cost model and the session risk settings. The release SHA
+stays on every record and is excluded from that fingerprint, so a compatible
+release does not split the evidence series. Learning uses closed, same-day,
+non-recovery trades from that exact experiment. Legacy unbound records stay
+visible and are excluded from the current experiment's learning statistics.
+
+## Historical experiment policy
+
+The 19 September 2026 operations text described selector v3 and playbooks v3
+with no fixed holding deadline. Premium, underlying invalidation, operator, halt
+and end-of-day exits were the live policy for that series. Code commit `28afd30`
+on 24 September 2026 replaced it with the cost-aware v5 deadlines above. Closed
+v3 trades remain historical evidence under their own experiment id. Follow the
+active section for current supervision, recovery and exits.
+
+## Evidence and recovery
 
 `banknifty_trade_outcomes` derives actual exit times from historical executable
 quotes, including the September 1 position closed on September 15. No ledger rows
@@ -88,7 +135,10 @@ fails; the release continues so observation and safety fixes are not stranded, w
 calendar gate keeps entries fail-closed before any AI reservation. Do not use an empty event list
 unless the cited source verifies complete coverage.
 
-Apply migrations through 015 using the configured owner. The current accepted setup
+Apply migrations through 018 using the configured owner. 016 adds tracked-contract,
+worker-incident and broker-cost tables. 017 adds the daily broker-readiness row.
+018 adds the incident lifecycle columns and the one-active-incident index; the
+worker incident section below requires it. The current accepted setup
 uses `neondb_owner`; role separation is optional and is not a blocker for this build.
 For a later role separation, provision roles using
 `scripts/provision_database_roles.py --output /protected/path/roles.env` with
@@ -100,12 +150,51 @@ root-only `/etc/kiwit/migration.env`; services never source that file. The deplo
 script refreshes runtime grants after migrations when the owner URL is configured.
 Validate login, session writes, halts, workers, migrations and rollback before release.
 
-Deployment packages are constrained by `requirements.lock`. The CI workflow update
-is preserved in `docs/audits/2026-09-19-workflow-update.patch`; applying it needs a
-GitHub credential with workflow scope. The current credential cannot modify Actions files.
-Migrations are additive; older code ignores the new columns/view/table. Rollback
-restores or stops the new worker units along with the application. No historical
-performance or database role is silently modified by an application import.
+`.github/workflows/ci.yml`, `security.yml` and `deploy-ec2.yml` are the release
+path. CI and security install the locked runtime with
+`scripts/runtime_dependencies.py`, and deploy compares the tested and scanned
+manifests before calling `deploy/remote_deploy.sh`. The September 2026
+`docs/audits/*workflow-update.patch` files are historical diffs. Do not apply
+them. `latest-dependencies.yml` is a separate manual compatibility check and is
+not the production install.
+
+`remote_deploy.sh` installs that locked runtime before it drains workers. It
+then runs `scripts/quiesce_deployment.py`. An open paper position, a non-flat
+cash or intraday exposure, or a worker that does not drain defers the rollout
+with exit 75 and restores the timers it stopped. Migrations have not started in
+that case. A missing or invalid options calendar warns and leaves entries
+fail-closed; it does not abort the release. Pending SQL then runs with
+`KIWIT_MIGRATION_DATABASE_URL` when that file exists, otherwise with the runtime
+URL. Grant refresh runs only when the migration URL is set. The supervisor
+timer starts before the API restarts. Readiness failure after activation
+quiesces again. If a position is open, rollback is deferred and the new release
+stays up for an operator. Otherwise the script restores the previous release
+directory, environment, units and nginx, then restarts them.
+
+Migrations are forward only. Restoring the previous application leaves applied
+SQL in place. After 018, `first_seen_at` and `last_seen_at` are required and
+have no default, so a pre-018 build cannot insert `banknifty_worker_incidents`.
+Tables added in 016 and 017 are unused by older code. No historical performance
+or database role is silently modified by an application import.
+
+## Release evidence
+
+Checked 30 September 2026 against this runbook's source tree:
+
+- `origin/main` was `a75a01379e156afe43cc78067683bf74c284de76` (merge of KIW-52).
+- [Deploy EC2 run 36722113204](https://github.com/imsubhamm/kiwiT/actions/runs/36722113204)
+  completed successfully for that SHA.
+- Public [https://kiwit.tathyaforge.in/health](https://kiwit.tathyaforge.in/health)
+  returned `execution: paper-only` and the same release SHA.
+
+That establishes merged and deployed for `a75a013`. It does not establish
+accepted strategy evidence. The 28 September 2026 audit of release `251ea21`
+observed `schema_migrations` version 018; this tree still ends at migration 018,
+and this documentation change did not re-query production `schema_migrations`.
+A SHA-bound observation, plan, paper entry, independent exit, reconciliation
+and report chain with replay parity is still outstanding. Record that chain with
+[OPTIONS_ACCEPTANCE_RUNBOOK.md](OPTIONS_ACCEPTANCE_RUNBOOK.md) before treating
+the deployed SHA as accepted. Missing external evidence stays incomplete.
 
 ## Verification still requiring external evidence
 
@@ -165,7 +254,7 @@ Provider references:
 
 ## Worker incident lifecycles (KIW-45)
 
-Worker incidents use the worker name and a normalized reason code as their active
+This lifecycle requires migration 018. Worker incidents use the worker name and a normalized reason code as their active
 identity. Repeated identical failures update one lifecycle's last-seen time,
 occurrence count, and latest evidence while preserving its first-seen time and
 initial detail. A changed reason closes the previous lifecycle as
