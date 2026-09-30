@@ -188,3 +188,16 @@ test('invalid calendar shows actionable cause, age and recovery across dashboard
   assert.doesNotMatch(nodes['bn-readiness'].textContent,/CALENDAR/);
   assert.doesNotMatch(nodes['bn-next-action'].textContent,/first seen/);
 });
+
+test('quote capacity overflow and missing class coverage are visible',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  data.operations={status:'ok',reason_codes:[],workers:{},funnel:{},rejection_counts:[],
+    tracking_coverage:{required_count:65,capacity:64,overflow_count:1,
+      policy:'opened_position_then_first_seen_then_symbol',overflow_symbols:['OLD'],
+      classes:{ordinary_candidate:{required_count:65,observed_count:63,missing_symbols:['OLD','NO_QUOTE']}}}};
+  timers[0]();await settle();
+  const text=nodes['bn-operations'].children.map(n=>n.textContent).join('\n');
+  assert.match(text,/65 required.*capacity 64.*overflow 1/);
+  assert.match(text,/Capacity exclusions: OLD/);
+  assert.match(text,/ordinary_candidate: 63\/65 quotes observed.*OLD, NO_QUOTE/);
+});

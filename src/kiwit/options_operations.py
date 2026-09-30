@@ -234,6 +234,7 @@ def diagnostics(store, now):
             "liveness": {"status": "degraded" if liveness_issues else "ok",
                          "reason_codes": liveness_issues},
             "strategy_readiness": strategy,
+            "tracking_coverage": health.get("observer", {}).get("detail", {}).get("tracking_coverage"),
             "broker_readiness": broker_readiness,
             "in_session": in_session, "pending_reports": pending, "security_notices": notices,
             "unresolved_ai_calls": unresolved_calls,

@@ -36,6 +36,7 @@ from .options_events import entry_calendar_blocker, event_context
 from .options_market import BankNiftyMarket
 from .options_operations import diagnostics, heartbeat, report_backlog
 from .options_policy import ENTRY_CAP, decision_event, entry_blocker_detail, entry_gate, reconsider_event
+from .options_retention import retention_window, tracking_capacity, tracking_coverage
 from .options_risk import (
     BROKER_COST_VERSION,
     cost_breakdown,
@@ -220,7 +221,7 @@ class BankNiftyStore:
             ),
         )
 
-    def track_plans(self, connection, state, plans, candidates, now, *, minutes=20, reason="eligible_plan"):
+    def track_plans(self, connection, state, plans, candidates, now, *, minutes=0, reason="eligible_plan"):
         contracts = {c["symbol"]: {k: v for k, v in c.items() if k not in {"quote", "selection_eligible", "tracked"}}
                      for c in candidates}
         for plan in plans:
@@ -232,14 +233,18 @@ class BankNiftyStore:
                 "last_selected_at=EXCLUDED.last_selected_at,retain_until=GREATEST(banknifty_tracked_contracts.retain_until,"
                 "EXCLUDED.retain_until),reasons=CASE WHEN banknifty_tracked_contracts.reasons @> EXCLUDED.reasons "
                 "THEN banknifty_tracked_contracts.reasons ELSE banknifty_tracked_contracts.reasons || EXCLUDED.reasons END",
-                (state["day"], plan["symbol"], json.dumps(contract), now, now, now + timedelta(minutes=minutes),
+                (state["day"], plan["symbol"], json.dumps(contract), now, now, now + max(retention_window(), timedelta(minutes=minutes)),
                  json.dumps([reason])),
             )
 
+    def tracking_status(self, connection, day, now):
+        rows = connection.execute(
+            "SELECT symbol,reasons,first_seen_at FROM banknifty_tracked_contracts "
+            "WHERE trading_date=%s AND retain_until>=%s", (day, now)).fetchall()
+        return tracking_capacity(rows)
+
     def tracked_symbols(self, connection, day, now):
-        return [row[0] for row in connection.execute(
-            "SELECT symbol FROM banknifty_tracked_contracts WHERE trading_date=%s AND retain_until>=%s "
-            "ORDER BY last_selected_at DESC LIMIT 64", (day, now)).fetchall()]
+        return self.tracking_status(connection, day, now)["selected_symbols"]
 
     def worker_incident(self, worker, now, status, evidence):
         if status not in {"failed", "recovered"}:
@@ -1114,12 +1119,21 @@ class BankNiftyService:
                     "SELECT market_snapshot->'chart_cache' FROM banknifty_market_history "
                     "WHERE trading_date=%s AND scan_state='live_observation' ORDER BY observed_at DESC LIMIT 1",
                     (local.date(),)).fetchone()
-                tracked = self.store.tracked_symbols(connection, local.date(), now)
+                tracking = self.store.tracking_status(connection, local.date(), now)
+                tracked = tracking["selected_symbols"]
             snapshot = (self.market.snapshot(now, cached_context=row[0] if row else None,
                                              tracked_symbols=tracked)
                         if isinstance(self.market, BankNiftyMarket) else self.market.snapshot(now))
             snapshot["provenance"] = provenance()
             with self.store.locked() as connection:
+                self.store.track_plans(connection, {"day": str(local.date())},
+                                       [c for c in snapshot["candidates"] if c.get("selection_eligible", True)],
+                                       snapshot["candidates"], now, reason="ordinary_candidate")
+                tracking = self.store.tracking_status(connection, local.date(), now)
+                snapshot["tracking_coverage"] = {
+                    **tracking_coverage(tracking, snapshot["candidates"]),
+                    "observed_at": now.isoformat(), "requested_symbols": tracked,
+                }
                 self.store.record_market_snapshot(connection,
                     {"day": str(local.date()), "detail": "live_observation"}, snapshot,
                     {"version": SELECTOR_VERSION, "plans": [], "evaluations": [], "mode": "observation_only"})
@@ -1132,6 +1146,7 @@ class BankNiftyService:
             heartbeat(self.store, "observer", self.clock(), "ok", {
                 "spot_at": snapshot["spot_at"], "tracked_contracts": len(tracked),
                 "feature_coverage": snapshot.get("option_feature_coverage", {}),
+                "tracking_coverage": snapshot["tracking_coverage"],
             })
             return {"state": "observed"}
         except (OSError, ValueError, ArithmeticError, BrokerApiError) as error:
@@ -1263,6 +1278,9 @@ class BankNiftyService:
                         current["detail"] = blocker_detail
                 self.store.save(connection, current)
                 self.store.record_market_snapshot(connection, current, snapshot, selection)
+                self.store.track_plans(connection, current,
+                                       [c for c in snapshot["candidates"] if c.get("selection_eligible", True)],
+                                       snapshot["candidates"], now, reason="ordinary_candidate")
                 self.store.track_plans(connection, current, selection["plans"], snapshot["candidates"], now)
                 self.store.track_plans(connection, current, selection.get("shadow_plans", []),
                                        snapshot["candidates"], now, minutes=60,
@@ -1324,6 +1342,15 @@ class BankNiftyService:
                     typed.evidence = failure
                     raise typed from None
                 self.store.settle(call_id, decision, usage, now=self.clock())
+                with self.store.locked() as connection:
+                    plans = snapshot.get("strategy_selection", {}).get("plans", [])
+                    selected = [p for p in plans if decision.get("action") == "BUY"
+                                and p["id"] == decision.get("plan_id")]
+                    rejected = [p for p in plans if p not in selected]
+                    self.store.track_plans(connection, snapshot, selected, snapshot["candidates"], self.clock(),
+                                           reason="selected_plan")
+                    self.store.track_plans(connection, snapshot, rejected, snapshot["candidates"], self.clock(),
+                                           reason="rejected_plan")
                 self._apply(decision, snapshot, call_id)
             heartbeat(self.store, "decision", self.clock(), "ok", {"ai_called": bool(call_id), "scan_at": now.isoformat()})
             return {"state": "running", "ai_called": bool(call_id)}
@@ -1343,6 +1370,10 @@ class BankNiftyService:
                     )
                 # Never log provider errors/bodies containing authorization material.
                 if current and current["state"] == "running":
+                    if call_id and not is_ai_failure:
+                        self.store.track_plans(connection, current,
+                                               snapshot.get("strategy_selection", {}).get("plans", []),
+                                               snapshot["candidates"], self.clock(), reason="rejected_plan")
                     current["detail"] = detail
                     self.store.save(connection, current)
                     blocked = {"reason": detail, "call_id": str(call_id) if call_id else None}

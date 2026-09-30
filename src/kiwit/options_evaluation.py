@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal as D
 
 from .intraday import IST
+from .options_retention import ENTRY_DELAY_SECONDS, MAX_HORIZON_MINUTES, QUOTE_GRACE_SECONDS
 from .options_risk import BROKER_COST_VERSION, fees, fill_price
 from .playbooks import VERSION, fingerprint
 
@@ -38,7 +39,7 @@ def quotes(tape, symbol, start, end):
 def counterfactual(plan, tape, at, horizon_minutes, extra_bps=0):
     if fingerprint({k: v for k, v in plan.items() if k != 'id'}) != plan['id']:
         return {'status': 'excluded', 'reason': 'plan_integrity'}
-    deadline = min(at + timedelta(seconds=90), stamp(plan['expires_at']))
+    deadline = min(at + timedelta(seconds=ENTRY_DELAY_SECONDS), stamp(plan['expires_at']))
     for entered_at, contract, market in quotes(tape, plan['symbol'], at, deadline):
         if entered_at >= stamp(plan['expires_at']) or entered_at < stamp(plan['created_at']):
             continue
@@ -64,7 +65,7 @@ def counterfactual(plan, tape, at, horizon_minutes, extra_bps=0):
         if entry > D(plan['max_fill']):
             continue
         due = entered_at + timedelta(minutes=horizon_minutes)
-        for exited_at, exit_contract, _market in quotes(tape, plan['symbol'], due, due + timedelta(seconds=90)):
+        for exited_at, exit_contract, _market in quotes(tape, plan['symbol'], due, due + timedelta(seconds=QUOTE_GRACE_SECONDS)):
             local = exited_at.astimezone(IST)
             if local.date() != entered_at.astimezone(IST).date() or (local.hour, local.minute) >= (15, 30):
                 continue
@@ -87,7 +88,7 @@ def counterfactual(plan, tape, at, horizon_minutes, extra_bps=0):
 
 
 def compare(bundle, *, horizon_minutes=15, extra_bps=0):
-    if not 1 <= horizon_minutes <= 60 or not 0 <= extra_bps <= 100:
+    if not 1 <= horizon_minutes <= MAX_HORIZON_MINUTES or not 0 <= extra_bps <= 100:
         raise ValueError('Horizon 1–60 minutes and extra cost 0–100 bps required')
     rows = []
     for call in bundle['calls']:
@@ -219,7 +220,7 @@ def _opportunity_evidence(item, outcome):
 
 def rule_matrix(bundle, *, horizon_minutes=15):
     """Apply cap/loss scenarios to the same observed opportunity stream."""
-    if not 1 <= horizon_minutes <= 60:
+    if not 1 <= horizon_minutes <= MAX_HORIZON_MINUTES:
         raise ValueError('Horizon 1–60 minutes required')
     opportunities, evidence = [], []
     for item in _measurable_opportunities(bundle):
