@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from kiwit.options_evaluation import compare, cost_reconciliation, exit_matrix, rule_matrix, session_acceptance
+from kiwit.options_evidence_gates import fee_reconciliation, release_acceptance, replay_exit_paths, unbiased_baselines
 
 
 def main():
@@ -19,10 +20,14 @@ def main():
     result['rule_matrix'] = rule_matrix(bundle, horizon_minutes=args.horizon_minutes)
     result['exit_matrix'] = exit_matrix(bundle)
     result['cost_reconciliation'] = cost_reconciliation(bundle)
+    result['exit_path_replay'] = replay_exit_paths(bundle)
+    result['unbiased_baselines'] = unbiased_baselines(bundle)
+    result['fee_reconciliation'] = fee_reconciliation(bundle)
     if bool(args.day) != bool(args.release):
         parser.error('--day and --release must be supplied together')
     if args.day:
         result['session_acceptance'] = session_acceptance(bundle, args.day, args.release)
+        result['release_acceptance'] = release_acceptance(bundle, args.day, args.release)
     print(json.dumps(result, indent=2))
 
 
