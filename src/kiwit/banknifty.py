@@ -48,7 +48,7 @@ from .options_risk import (
 )
 from .paper_session import validate_limits
 from .playbooks import VERSION as SELECTOR_VERSION
-from .playbooks import catalogue, select_plans, underlying_exit, validate_plan
+from .playbooks import EntryQuoteRejection, catalogue, select_plans, underlying_exit, validate_plan
 
 DESK = "kiwit-banknifty-paper"
 
@@ -1380,6 +1380,10 @@ class BankNiftyService:
                     if isinstance(error, EntryCalendarAuthorityError):
                         blocked.update(reason_code=error.evidence["blocker"]["reason_code"],
                                        calendar_authority=error.evidence)
+                    if isinstance(error, EntryQuoteRejection):
+                        blocked.update(reason_code=error.primary_reason_code,
+                                       reason_codes=error.reason_codes,
+                                       quote_rejections=error.failures)
                     self.store.event(connection, current, "blocked", blocked)
             if is_ai_failure:
                 category = (getattr(error, "evidence", None) or {}).get("category") or "unspecified"

@@ -35,6 +35,18 @@ test('playbook plans, rejection reasons and evidence remain text-only and clearl
   assert.equal(nodes['bn-playbook-review'].children[0].innerHTML,undefined);
   assert.match(nodes['bn-playbook-review'].children[0].textContent,/<img/);
 });
+test('whole-lot sizing names the binding limit and says it is not a loss cap',async()=>{
+  const {nodes,data,timers}=setup();await settle();
+  data.playbooks=[{id:'test_v1',name:'Opening range'}];
+  data.session={state:'running',strategy_selection:{version:'selector-v1',at:new Date('2026-09-11T05:00:00Z').toISOString(),evaluations:[{playbook_id:'test_v1',eligible:false,reasons:['binding fee_reserve'],sizing:[{symbol:'BANKNIFTY26SEP55000CE',binding_constraint:'fee_reserve',minimum_initial_capital_estimate:'220000.00',minimum_cash:'55000.00',note:'Estimate before later losses, gaps and liquidity changes; not a guaranteed loss cap'}],sizing_omitted:2}],plans:[]}};
+  timers[0]();await settle();
+  const text=nodes['bn-playbooks'].children[0].textContent;
+  assert.match(text,/binding fee_reserve/);
+  assert.match(text,/minimum capital ₹220000.00/);
+  assert.match(text,/not a guaranteed loss cap/);
+  assert.match(text,/2 more contracts omitted/);
+  assert.equal(nodes['bn-playbooks'].children[0].innerHTML,undefined);
+});
 test('daily learning is labelled as context rather than training or promotion',async()=>{
   const {nodes,data,timers}=setup();await settle();
   data.learning={version:'learning-v1',mode:'bounded_in_context_evidence_not_model_training',limits:'no automatic promotion',

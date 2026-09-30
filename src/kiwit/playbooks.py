@@ -153,11 +153,52 @@ def route_reasons(analysis, pattern, playbook, now):
     return reasons
 
 
-def quote_ok(quote, now):
-    if not age_ok(quote.get("stamp"), now, 90):
-        return False
+QUOTE_MAX_AGE_SECONDS = 90
+QUOTE_MAX_SPREAD = D(".02")
+QUOTE_REJECTION_ORDER = ("QUOTE_STALE", "QUOTE_SPREAD", "ENTRY_PRICE_LIMIT")
+
+
+class EntryQuoteRejection(ValueError):
+    """Final quote recheck failed. Thresholds stay at the existing gates."""
+
+    def __init__(self, failures):
+        ordered = sorted(failures, key=lambda item: QUOTE_REJECTION_ORDER.index(item["code"]))
+        self.failures = ordered
+        self.reason_codes = [item["code"] for item in ordered]
+        self.primary_reason_code = self.reason_codes[0]
+        detail = "; ".join(
+            f"{item['code']} observed {item['observed']} threshold {item['threshold']}" for item in ordered
+        )
+        super().__init__(f"{self.primary_reason_code}: {detail}")
+
+
+def quote_quality_failures(quote, now):
+    """Spread and freshness only. Price-cap checks stay with the immutable plan."""
+    failures = []
+    stamp = quote.get("stamp")
+    age = (now - datetime.fromisoformat(stamp)).total_seconds() if stamp else None
+    if age is None or not 0 <= age <= QUOTE_MAX_AGE_SECONDS:
+        failures.append({
+            "code": "QUOTE_STALE",
+            "observed": None if age is None else str(age),
+            "threshold": str(QUOTE_MAX_AGE_SECONDS),
+            "unit": "seconds",
+        })
     bid, ask = D(quote["bid"]), D(quote["ask"])
-    return bid.is_finite() and ask.is_finite() and 0 < bid <= ask and (ask - bid) / ask <= D(".02")
+    prices_ok = bid.is_finite() and ask.is_finite() and 0 < bid <= ask
+    spread = (ask - bid) / ask if prices_ok else None
+    if spread is None or spread > QUOTE_MAX_SPREAD:
+        failures.append({
+            "code": "QUOTE_SPREAD",
+            "observed": "invalid" if spread is None else str(spread),
+            "threshold": str(QUOTE_MAX_SPREAD),
+            "unit": "fraction_of_ask",
+        })
+    return failures
+
+
+def quote_ok(quote, now):
+    return not quote_quality_failures(quote, now)
 
 
 def missing_required_option_fields(contract, playbook):
@@ -204,7 +245,7 @@ def select_plans(snapshot, state, now):
             key=lambda p: (p["at"], p["id"]),
             reverse=True,
         )
-        reasons, chosen = [], None
+        reasons, chosen, sizing_failures = [], None, []
         for pattern in patterns:
             rejected = route_reasons(analysis, pattern, playbook, now)
             if rejected:
@@ -249,8 +290,12 @@ def select_plans(snapshot, state, now):
                 qty = quantity_for(state, contract, capped)
                 if not qty:
                     size = sizing_diagnostics(state, contract, capped)
-                    reasons.append(f"{contract['symbol']}: whole lot cannot fit cash/risk/depth; "
-                                   f"estimated initial capital >= INR {size['minimum_initial_capital_estimate']}")
+                    reasons.append(
+                        f"{contract['symbol']}: whole lot cannot fit cash/risk/depth; "
+                        f"binding {size['binding_constraint']}; "
+                        f"estimated initial capital >= INR {size['minimum_initial_capital_estimate']}"
+                    )
+                    sizing_failures.append(size)
                     continue
                 fill = fill_price(contract["quote"], contract, True)
                 try:
@@ -344,18 +389,22 @@ def select_plans(snapshot, state, now):
             selection["shadow_plans"].append(chosen)
         elif chosen:
             selection["plans"].append(chosen)
-        selection["evaluations"].append(
-            {
-                "playbook_id": playbook["id"],
-                "eligible": bool(chosen and not calendar_reason),
-                "shadow_plan_id": chosen["id"] if chosen and calendar_reason else None,
-                "reasons": ["Fresh setup and aligned regimes; awaiting AI selection"]
-                if chosen and not calendar_reason
-                else [calendar_reason]
-                if chosen and calendar_reason
-                else sorted(set(reasons)) or ["No fresh matching chart setup"],
-            }
-        )
+        evaluation = {
+            "playbook_id": playbook["id"],
+            "eligible": bool(chosen and not calendar_reason),
+            "shadow_plan_id": chosen["id"] if chosen and calendar_reason else None,
+            "reasons": ["Fresh setup and aligned regimes; awaiting AI selection"]
+            if chosen and not calendar_reason
+            else [calendar_reason]
+            if chosen and calendar_reason
+            else sorted(set(reasons)) or ["No fresh matching chart setup"],
+        }
+        if sizing_failures and not chosen:
+            evaluation["sizing"] = sizing_failures[:5]
+            omitted = len(sizing_failures) - len(evaluation["sizing"])
+            if omitted:
+                evaluation["sizing_omitted"] = omitted
+        selection["evaluations"].append(evaluation)
     return selection
 
 
@@ -395,8 +444,19 @@ def validate_plan(decision, snapshot, state, quote, underlying, now, *, executio
     if not valid:
         raise ValueError("Underlying trigger invalidated or entry chase limit exceeded")
     contract = next(c for c in snapshot["candidates"] if c["symbol"] == plan["symbol"])
-    if not quote_ok(quote, now) or fill_price(quote, contract, True) > D(plan["max_fill"]):
-        raise ValueError("Option spread, freshness or entry price limit failed")
+    failures = quote_quality_failures(quote, now)
+    bid, ask = D(quote["bid"]), D(quote["ask"])
+    if bid.is_finite() and ask.is_finite() and 0 < bid <= ask:
+        fill = fill_price(quote, contract, True)
+        if fill > D(plan["max_fill"]):
+            failures.append({
+                "code": "ENTRY_PRICE_LIMIT",
+                "observed": str(fill),
+                "threshold": str(D(plan["max_fill"])),
+                "unit": "premium",
+            })
+    if failures:
+        raise EntryQuoteRejection(failures)
     if plan["quantity"] <= 0 or plan["quantity"] > quantity_for(state, contract, quote):
         raise ValueError("Planned quantity no longer fits cash, risk or liquidity")
     exits = exit_levels(state, playbook["live_exit"], fill_price(quote, contract, True), plan["quantity"], contract)
