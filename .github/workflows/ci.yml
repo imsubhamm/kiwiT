@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -30,10 +31,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: pip install -e '.[api,production,workflow,research,ml,llm,dev]'
+      - name: Install locked release runtime
+        run: |
+          python -m venv .runtime
+          .runtime/bin/python scripts/runtime_dependencies.py install --release "$GITHUB_SHA"
+          echo "$PWD/.runtime/bin" >> "$GITHUB_PATH"
+      - name: Install test tools without changing runtime versions
+        run: python -m pip install --timeout 20 --retries 2 -c requirements.lock pytest ruff mypy
+      - name: Verify runtime after test tooling
+        run: python scripts/runtime_dependencies.py verify --release "$GITHUB_SHA"
       - run: ruff check src/kiwit/api.py src/kiwit/brokers src/kiwit/observability.py src/kiwit/database.py src/kiwit/langgraph_workflow.py src/kiwit/paper_trading.py src/kiwit/intraday.py src/kiwit/paper_session.py src/kiwit/banknifty.py src/kiwit/options_ai.py src/kiwit/options_market.py src/kiwit/chart_analysis.py
       - run: ruff check src/kiwit/ml src/kiwit/marketdata/canonical.py src/kiwit/marketdata/features.py src/kiwit/marketdata/history.py src/kiwit/marketdata/live.py src/kiwit/decision_journal.py
       - run: ruff check src/kiwit/llm src/kiwit/session_adapter.py src/kiwit/session_orchestrator.py src/kiwit/unified_backtest.py src/kiwit/evaluation_dashboard.py src/kiwit/risk_policy.py src/kiwit/sizing.py src/kiwit/paper_simulator.py
@@ -43,3 +51,10 @@ jobs:
         with:
           node-version: '22'
       - run: node --test tests/*.test.cjs
+      - name: Verify tested runtime and publish identity
+        run: python scripts/runtime_dependencies.py verify --release "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tested-runtime
+          path: runtime-evidence/
+          if-no-files-found: error

@@ -13,21 +13,34 @@ permissions:
 
 jobs:
   python-security:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: pip install -e '.[api,production,workflow,research,ml,llm]' pip-audit bandit
-      - name: Audit dependencies
-        # kiwiT is installed editable from this checkout and is not a PyPI dependency.
-        # Skipping that local package keeps every resolved third-party dependency audited.
-        run: pip-audit --skip-editable
+      - name: Install locked release runtime
+        run: |
+          python -m venv .runtime
+          .runtime/bin/python scripts/runtime_dependencies.py install --release "$GITHUB_SHA"
+      - name: Install isolated security tools
+        run: |
+          python -m venv .security
+          .security/bin/python -m pip install --timeout 20 --retries 2 pip-audit bandit
+      - name: Audit the resolved release graph
+        # Audit exact runtime pins, not the scanner's own environment. Errors fail the job.
+        run: timeout 180 .security/bin/pip-audit --strict --timeout 20 --disable-pip --no-deps -r runtime-evidence/runtime-requirements.txt
       - name: Static security analysis
-        run: bandit -q -r src scripts -x tests
+        run: .security/bin/bandit -q -r src scripts -x tests
+      - name: Verify scanned runtime
+        run: .runtime/bin/python scripts/runtime_dependencies.py verify --release "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scanned-runtime
+          path: runtime-evidence/
+          if-no-files-found: error
       - name: Reject committed private keys
         run: |
           if git grep -I -n -- 'BEGIN .*PRIVATE KEY' -- ':!*.md' ':!.github/workflows/security.yml'; then

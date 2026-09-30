@@ -85,3 +85,46 @@ Deployment validates the configured file as `kiwit` before migrations or activat
 unreadable, stale, uncovered or malformed calendars emit an explicit deployment warning and leave
 options entries fail-closed. They do not block API, observer or safety-worker deployment. This keeps
 market evidence and recovery services current while preventing AI reservations and new positions.
+
+## Locked release dependencies (KIW-52)
+
+Release CI, security, and EC2 use `.python-version` (Python 3.14) and the same
+`scripts/runtime_dependencies.py` installer. The existing universal lock remains
+the source of version pins. Each fresh runtime installation uses all production
+extras, rejects any resolved third-party package missing from the lock, and runs
+`pip check`. CI test tools are installed under the same constraints and the runtime
+is reverified before and after tests. Security tooling is isolated in a separate
+venv and audits only the exact resolved runtime requirements, with strict failure
+handling. Local `kiwit` code is scanned by Bandit rather than queried on PyPI.
+
+Successful test and security jobs publish `tested-runtime` and `scanned-runtime`
+artifacts. These include pip's install report, exact resolved requirements, and a
+manifest binding package versions to the Git SHA, Python major/minor, OS,
+architecture, and hashes of the lockfile and project metadata. The deploy job
+requires the two manifests to match. EC2 verifies its fresh installation against
+that evidence **before** draining workers, running migrations, or activating a
+release. Missing evidence, another commit, package drift, or an unsupported Python
+version fails preparation; the deployment guard is not bypassed.
+
+Manual invocation now requires a third argument containing the tested manifest:
+
+```sh
+sudo bash remote_deploy.sh release.tar.gz FULL_COMMIT_SHA tested-runtime-manifest.json
+```
+
+Use evidence downloaded from successful release checks for that exact commit.
+Do not construct or substitute a manifest to evade a mismatch. The installed
+release retains `tested-runtime-manifest.json` and `runtime-evidence/` for review.
+This verifies resolved dependency identity, not byte-for-byte wheel reproducibility;
+build isolation dependencies and security tool versions are not runtime graph members.
+
+Pip uses 20-second network timeouts and two retries, with a 600-second overall
+runtime-install deadline. The vulnerability audit has a 180-second deadline and
+20-second request timeout. Job deadlines also bound test-tool installation and
+other network steps. Dependency/audit errors fail release acceptance.
+
+`Latest dependency compatibility (optional)` is a manually dispatched workflow
+that installs without the lock. Its results never replace release checks or
+produce deployment evidence. To update dependencies, regenerate and review the
+lock, then run the release checks. The lock includes dev pins, but dev-only
+packages are excluded from runtime manifests and production installation.
