@@ -23,3 +23,9 @@ data/market/manifests/
 
 .venv-audit/
 .audit-tools/
+
+.runtime/
+.security/
+runtime-evidence/
+tested-runtime/
+scanned-runtime/

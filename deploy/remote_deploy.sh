@@ -3,6 +3,8 @@ set -euo pipefail
 
 archive=${1:?release archive required}
 release_sha=${2:?release SHA required}
+expected_runtime=${3:?tested runtime manifest required}
+[[ -r $expected_runtime ]] || { echo "tested runtime manifest is unreadable" >&2; exit 1; }
 release_root=/opt/kiwit/releases
 if [[ ! $release_sha =~ ^[0-9a-f]{40}$ ]]; then
   echo "release SHA must be a full Git commit hash" >&2
@@ -109,7 +111,11 @@ install -d -o kiwit -g kiwit -m 0750 "$release_dir"
 tar -xzf "$archive" -C "$release_dir"
 chown -R kiwit:kiwit "$release_dir"
 runuser -u kiwit -- python3 -m venv "$release_dir/.venv"
-runuser -u kiwit -- "$release_dir/.venv/bin/python" -m pip install --disable-pip-version-check -c "$release_dir/requirements.lock" "$release_dir[api,production,workflow,research,ml,llm]"
+# Dependency failures and mismatches abort preparation before draining any workers.
+install -o kiwit -g kiwit -m 0644 "$expected_runtime" "$release_dir/tested-runtime-manifest.json"
+runuser -u kiwit -- "$release_dir/.venv/bin/python" "$release_dir/scripts/runtime_dependencies.py" install \
+  --root "$release_dir" --release "$release_sha" --output "$release_dir/runtime-evidence" \
+  --expected "$release_dir/tested-runtime-manifest.json"
 printf '%s\n' "$release_sha" > "$release_dir/RELEASE_SHA"
 chown kiwit:kiwit "$release_dir/RELEASE_SHA"
 
