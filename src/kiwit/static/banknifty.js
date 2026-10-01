@@ -74,6 +74,7 @@
       if(analysis.weekly_alignment) context.push(`15m vs previous week: ${analysis.weekly_alignment.alignment} · Current price: ${analysis.weekly_alignment.price_location}`);
     }
     if(analysis.previous_day) context.push(`Previous day: high ${analysis.previous_day.high} · low ${analysis.previous_day.low} · close ${analysis.previous_day.close} · Opening gap ${analysis.gap_pct}%`);
+    if(analysis.excluded_prior_sessions?.length) context.push(`Excluded incomplete prior sessions: ${analysis.excluded_prior_sessions.join(', ')}. Missing minutes are not filled.`);
     lines('bn-context', context.concat(analysis.issues || []));
     lines('bn-patterns', analysis.patterns.length ? analysis.patterns.map(p=>`${p.name} · ${p.direction} · ${p.timeframe} · ${p.strategy} · Level ${p.level} · Invalidation ${p.invalidation} · Detected ${p.at}`) : ['No active confirmed setup. Waiting is a valid decision.']);
     renderChart();

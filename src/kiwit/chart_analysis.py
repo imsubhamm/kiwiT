@@ -353,10 +353,11 @@ def analyse(current, context, now):
     if context.get("day") != day or context.get("version") != VERSION:
         raise ValueError("Historical chart cache belongs to another day/version")
     daily = context["daily"]
+    excluded = [str(day) for day in context.get("partial_sessions") or []]
     if len(daily) < 5:
         issues.append("Fewer than five complete prior regular sessions")
-    if context["partial_sessions"]:
-        issues.append("Incomplete prior sessions: " + ", ".join(context["partial_sessions"]))
+        if excluded:
+            issues.append("Incomplete prior sessions: " + ", ".join(excluded))
     calendar_week = context.get("previous_calendar_week")
     if not calendar_week or calendar_week["coverage"]["status"] != "complete":
         issues.append("Previous calendar week incomplete; absent weekdays require data or holiday verification")
@@ -394,6 +395,7 @@ def analyse(current, context, now):
         "at": current[-1]["at"],
         "ready": not issues,
         "issues": issues,
+        "excluded_prior_sessions": excluded,
         "timeframes": frames,
         "previous_sessions": daily,
         "week": weekly,
@@ -405,11 +407,21 @@ def analyse(current, context, now):
         "gap_pct": rounded((current[0]["open"] / previous["close"] - 1) * 100) if previous else None,
         "summary": "; ".join(issues)
         if issues
-        else f"15m {frames['15m']['regime']}; {len(patterns)} active rule-based setups",
+        else f"15m {frames['15m']['regime']}; {len(patterns)} active rule-based setups"
+        + (f"; excluded incomplete prior sessions: {', '.join(excluded)}" if excluded else ""),
         "limitations": [
             "Heuristic patterns, not validated edges or win probabilities",
             "Index has no traded volume: no VWAP or volume confirmation",
             "Calendar is versioned; unverified years and special-session changes require review",
+            *(
+                [
+                    "Incomplete prior sessions excluded from chart context: "
+                    + ", ".join(excluded)
+                    + ". Their missing minutes are not filled."
+                ]
+                if excluded and not issues
+                else []
+            ),
         ],
         "chart_bars": {"1m": current[-60:], "5m": five[-40:], "15m": fifteen[-30:]},
     }
