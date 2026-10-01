@@ -168,6 +168,20 @@ def test_partial_history_not_silently_treated_as_full_session():
     assert ctx["partial_sessions"] == ["2026-08-25"]
 
 
+def test_unrepairable_partial_prior_session_does_not_block_a_later_day():
+    data = [row for day in HISTORY_DATES[:-1] for row in rows(day)] + rows("2026-08-25", 200)
+    ctx = history_context(payload(data), NOW)
+    assert "2026-08-25" in ctx["partial_sessions"]
+    assert len(ctx["daily"]) == 5
+    result = analyse(parse_minutes(payload(rows("2026-08-26", 45)), NOW), ctx, NOW)
+    assert result["ready"]
+    assert result["excluded_prior_sessions"] == ["2026-08-25"]
+    assert result["previous_day"]["at"][:10] == "2026-08-24"
+    assert "2026-08-25" not in {bar["at"][:10] for bar in result["previous_sessions"]}
+    assert any("not filled" in item for item in result["limitations"])
+    assert "excluded incomplete prior sessions: 2026-08-25" in result["summary"]
+
+
 def test_history_outside_requested_window_is_not_used_as_recent_context():
     ctx = history_context(payload(rows("2026-07-01")), NOW)
     assert ctx["daily"] == [] and ctx["five"] == [] and ctx["fifteen"] == []
