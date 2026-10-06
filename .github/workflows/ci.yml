@@ -53,7 +53,7 @@ jobs:
       - run: node --test tests/*.test.cjs
       - name: Verify tested runtime and publish identity
         run: python scripts/runtime_dependencies.py verify --release "$GITHUB_SHA"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tested-runtime
           path: runtime-evidence/

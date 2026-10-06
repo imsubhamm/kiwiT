@@ -36,7 +36,7 @@ jobs:
         run: .security/bin/bandit -q -r src scripts -x tests
       - name: Verify scanned runtime
         run: .runtime/bin/python scripts/runtime_dependencies.py verify --release "$GITHUB_SHA"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: scanned-runtime
           path: runtime-evidence/
