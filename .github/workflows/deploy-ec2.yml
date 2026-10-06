@@ -26,11 +26,11 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: tested-runtime
           path: tested-runtime
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: scanned-runtime
           path: scanned-runtime
